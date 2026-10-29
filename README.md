@@ -41,9 +41,18 @@ exactly `<you>.github.io` and push the same files to it.
 
 ## What's in it
 
-**Scenarios** — serve receive, attack on our right, attack on our left, tip over
-the block, opponent middle quick, covering our own hitter, free ball transition,
-defence to offence.
+**Three situations, one rally.** Serve receive, their attack, and a free ball.
+Each starts differently and then runs the same way through to the end: our team
+plays the first ball, the setter releases to the target, a hitter finishes it,
+and the ball lands on their floor. Nothing stops at the dig.
+
+**Two markers drive everything.** Each situation has a pair of draggable
+markers — the server and where the serve lands, their setter and where the set
+goes, or where a free ball comes from and lands. None of the rally is a
+hand-authored clip: `buildRally()` generates the whole thing from those two
+points, so moving a marker changes where the first contact happens, who makes
+it, who is then allowed to set (a setter who dug it cannot), which pin finishes
+the attack, and where the opposing block forms.
 
 **Drag anybody** — grab any player, including the opponents, and put them
 somewhere else. The rest of the simulation follows rather than ignoring you:
@@ -125,8 +134,8 @@ feet off the block, get off the net *before* getting wide, and turn and run
 rather than back-pedal. The outside finishes outside the antenna, since left
 side attackers take well over half of all transition swings.
 
-**Back-row system** — Perimeter vs. Middle up. The clearest comparison is the
-"Tip over the block" scenario: toggle between them and watch who gets the ball.
+**Back-row system** — Perimeter vs. Middle up. Put the set marker on a pin in
+"Their attack", then toggle the system and watch who ends up with the dig.
 
 **Landing cross** — marks where the ball is about to come down while it is still
 in the air.
@@ -198,6 +207,9 @@ from the net (`0`) to the endline (`9`). The attack line is at `y = 3`.
 - Responsibility is sticky. Two players who are nearly tied used to swap it
   frame to frame, and since the ball snaps to whoever holds it, it flickered
   between two pairs of hands.
+- x runs the same way on both sides of the net, so a blocker facing a hitter
+  stands at roughly the SAME x, not the mirrored one. Mirroring it puts the
+  block on the wrong side of the court, which is easy to miss on screen.
 - Blockers stand 0.9 m apart, not 1.35 m. The wider spacing left exactly the
   seam the coaching note warns about.
 - Defenders step in up to 0.45 m when the ball is coming down in front of

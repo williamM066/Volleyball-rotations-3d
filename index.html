@@ -272,8 +272,9 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
 
     <fieldset>
       <legend>Positions</legend>
-      <p class="hintline">Drag any player to move them. The lit floor and the
-        &ldquo;who takes it&rdquo; answer update as you go.</p>
+      <p class="hintline">Drag the two coloured markers to change how the rally starts, and
+        drag any player to move them. Everything after that &mdash; who plays
+        the first ball, who sets, who finishes &mdash; follows from it.</p>
       <button id="resetPos" class="ghost" hidden>Put <span id="movedN">0</span> back</button>
     </fieldset>
 
@@ -639,7 +640,17 @@ canvas.addEventListener('pointermove', e=>{
   if(drag.player){
     canvas.style.cursor = 'grabbing';
     const pt = floorPointAt(e);
-    if(pt){ ui.overrides[drag.player] = pt; refreshMoved(); }
+    if(pt && drag.player.indexOf('mark:') === 0){
+      /* a marker is not a player: moving it regenerates the whole rally */
+      const d = (MARK_DEF[ui.scenario] || [])[+drag.player.slice(5)];
+      if(d){
+        ui.marks[ui.scenario][d.k] =
+          [clamp(pt[0], d.lim[0], d.lim[1]), clamp(pt[1], d.lim[2], d.lim[3])];
+        rebuildSteps();
+      }
+    } else if(pt){
+      ui.overrides[drag.player] = pt; refreshMoved();
+    }
   } else {
     orbit.theta -= dx * .006;
     orbit.phi   -= dy * .005;
@@ -1066,9 +1077,41 @@ const OPP_IDS = ['OA','OS','OX'];
 const oppActors = {};
 OPP_IDS.forEach(id => oppActors[id] = makeActor());
 
+/* --- the two markers that drive the whole rally --- */
+function makeMark(key){
+  const g = new THREE.Group();
+  const flat = c => new THREE.MeshBasicMaterial({color:c, transparent:true, depthTest:false});
+  const ring = new THREE.Mesh(new THREE.RingGeometry(.34,.47,28), flat(0xffffff));
+  ring.rotation.x = -Math.PI/2; ring.position.y = .05; ring.renderOrder = 8; g.add(ring);
+  const post = new THREE.Mesh(new THREE.CylinderGeometry(.035,.035,1.0,8), flat(0xffffff));
+  post.position.y = .55; post.material.opacity = .8; post.renderOrder = 8; g.add(post);
+  const knob = new THREE.Mesh(new THREE.SphereGeometry(.12,16,12), flat(0xffffff));
+  knob.position.y = 1.1; knob.renderOrder = 8; g.add(knob);
+  const lbl = new THREE.Sprite(new THREE.SpriteMaterial({transparent:true, depthWrite:false, depthTest:false}));
+  lbl.scale.set(1.9,.52,1); lbl.position.y = 1.6; lbl.renderOrder = 9; g.add(lbl);
+  g.userData.dragKey = key;
+  g.userData.parts = {ring, post, knob, lbl};
+  scene.add(g);
+  return g;
+}
+const marks = [makeMark('mark:0'), makeMark('mark:1')];
+function refreshMarks(){
+  const defs = MARK_DEF[ui.scenario] || [];
+  marks.forEach((mk,i)=>{
+    const d = defs[i];
+    if(!d){ mk.visible = false; return; }
+    const {ring, post, knob, lbl} = mk.userData.parts;
+    for(const part of [ring, post, knob]) part.material.color.setHex(d.col);
+    if(lbl.material.map) lbl.material.map.dispose();
+    lbl.material.map = labelTexture(d.label, '#' + d.col.toString(16).padStart(6,'0'));
+    lbl.material.needsUpdate = true;
+  });
+}
+
 const dragTargets = [];
 for(const z of ZONES)    dragTargets.push({obj:actors[z].fig.root, key:z});
 for(const id of OPP_IDS) dragTargets.push({obj:oppActors[id].fig.root, key:id});
+for(const mk of marks)   dragTargets.push({obj:mk, key:mk.userData.dragKey});
 for(const t of dragTargets) t.obj.userData.dragKey = t.key;
 const dragObjs = dragTargets.map(t => t.obj);
 
@@ -1143,502 +1186,313 @@ function whoTakes(pt, setup){
   return best;
 }
 
-/* =============== scenarios =============== */
-const blend = (a,b,k)=>{
-  const out = {};
-  for(const z in b){
-    const pa = (a[z]||b[z]).p, pb = b[z].p;
-    out[z] = {...b[z], p:[pa[0]+(pb[0]-pa[0])*k, pa[1]+(pb[1]-pa[1])*k], pose:'ready', jump:0};
-  }
-  return out;
-};
-const baseZones = ()=>{
-  const o = {};
-  for(const z of ZONES) o[z] = {p:[...BASE[z]], pose:'ready'};
-  return o;
-};
+/* =============== the rally ===============
+   Three starting situations, and after that always the same thing: our team
+   plays the first ball, the setter releases to the target, and a hitter
+   finishes it. None of this is a hand-authored clip. The whole rally is
+   generated from the two markers the user drags, so moving the server or the
+   opposing setter changes everything downstream - where the first contact
+   happens, who makes it, and what our attack looks like. Every rally runs
+   through our own swing and the ball landing, instead of stopping at the dig. */
 
-/* Nobody may make two contacts in a row, so if the setter dug the ball they
-   cannot also set it. The right side takes over, which is what teams actually
-   rehearse: the setter ends up digging far more often than people expect. */
-function setterAfter(ctx, respZone){
-  const nominal = ZONES.find(z => ctx.lu[z] === 'S');
-  if(respZone !== nominal) return {zone:nominal, emergency:false};
+const clamp = (v,lo,hi)=> Math.max(lo, Math.min(hi, v));
+
+const TARGET = [.9, 1.7];                 // where the setter wants the ball
+const PIN_L  = [-3.25, .95];              // our left-pin contact point
+const PIN_R  = [ 3.25, .95];
+
+function roles(ctx){
   const inv = slotToZone(ctx.lu);
-  const alt = [inv.P2, inv.P1, inv.P4, inv.P6, inv.P3, inv.P5].find(z => z && z !== respZone);
+  return {inv, setter:ZONES.find(z => ctx.lu[z] === 'S'),
+          pinL:inv.P4, mid:inv.P3, pinR:inv.P2};
+}
+
+/* The setter cannot take the second ball if they played the first one - that
+   is a double contact - so the right side steps in and sets instead. */
+function setterAfter(ctx, firstTouch){
+  const nominal = ZONES.find(z => ctx.lu[z] === 'S');
+  if(firstTouch !== nominal) return {zone:nominal, emergency:false};
+  const inv = slotToZone(ctx.lu);
+  const alt = [inv.P2, inv.P1, inv.P4, inv.P6, inv.P3, inv.P5].find(z => z && z !== firstTouch);
   return {zone:alt || nominal, emergency:true};
 }
-const SET_NOTE = 'Setter releases to the target as soon as the dig is up.';
-const EMERGENCY_NOTE = 'The setter dug this ball, so they are not allowed to touch it again - that would be a double contact. The right side steps in and sets instead.';
 
-function scDefense(ctx, side, kind){
-  const sx = side === 'right' ? 1 : -1;
-  const slot = side === 'right' ? defRight(ctx.system) : mirrorSetup(defRight(ctx.system));
-  const S = bySlot(slot, ctx.lu);
-  const inv = slotToZone(ctx.lu);
-  const blockers = (side === 'right' ? ['P2','P3'] : ['P4','P3']).map(sl => inv[sl]);
-  const A = [3.15*sx, -.45, 3.25];
-  const info = {blockers, att:'OA', az:A[2]};
-  const land = kind === 'tip' ? [1.95*sx, 2.95] : [3.6*sx, 5.25];
-  /* predicted only so the double-contact rule can be decided up front; the
-     live digger is worked out from real positions while the clip plays */
-  const setr = setterAfter(ctx, whoTakes(land, S));
-
-  const steps = [
-    {t:0, phase:'Base \u2014 read the setter',
-     coach:'Opponent is about to set. Blockers are at the net with eyes on the setter, back row is inside the court and stopped. Nobody commits until the ball leaves the setter\u2019s hands.',
-     zones:switchedBase(ctx.lu),
-     opp:{OS:{p:[-.7*sx,-1.9], pose:'set'}, OA:{p:[3.5*sx,-4.4], pose:'ready'}},
-     ball:[-.7*sx,-1.9,2.35]},
-
-    {t:1.2, phase:'Set is out \u2014 move',
-     coach:'The set is going outside. Blockers travel and the back row builds its shape around where the block will be, not around where the ball is now.',
-     zones:blend(switchedBase(ctx.lu), S, .6),
-     opp:{OS:{p:[-.7*sx,-1.9], pose:'ready'}, OA:{p:[3.4*sx,-2.7], pose:'approach'}},
-     ball:[A[0],A[1],A[2]], arc:1.1},
-
-    {t:2.1, phase:'Block up \u2014 what is open',
-     coach:'Block is up and closed. The lit floor is every spot a hard swing can still reach, and covering it is the back row\u2019s job. Everything dark is behind the blockers\u2019 hands, where only tips and deflections land.',
-     zones:S, shadow:info,
-     opp:{OA:{p:[A[0],A[1]], pose:'swing', jump:.82}},
-     ball:[A[0],A[1],A[2]]},
-
-    {t:3.1, phase:kind === 'tip' ? 'Tip over the block' : 'Hard swing, line',
-     coach:kind === 'tip'
-       ? 'The hitter sees the block and tips it short behind them. The floor here is dark, so no hard swing can reach it. That is exactly why the tip works.'
-       : 'The hitter goes line \u2014 the only corridor the block left open. Notice it lands in the lit strip, which is exactly where the line digger is standing.',
-     zones:S, shadow:info, resp:true,
-     opp:{OA:{p:[A[0],A[1]], pose:'swing', jump:.45}},
-     ball:[land[0],land[1],.75]},
-
-    {t:3.9, phase:'Dig',
-     coach:kind === 'tip'
-       ? (ctx.system === 'rotational'
-          ? 'The middle back was already standing here. Nothing heroic was needed \u2014 the position did the work.'
-          : 'In perimeter the middle back is 4 m too deep and the off-blocker is on the wrong side of the court. This ball drops. That is the trade perimeter makes: strong against the hard swing, soft against the tip.')
-       : 'The line digger plays it because they were the one defender standing in the lit strip.',
-     zones:S, shadow:info, resp:true,
-     opp:{OA:{p:[A[0],A[1]], pose:'ready'}},
-     ball:[land[0],land[1],.42]},
-
-    {t:5.2, phase:'Transition',
-     coach:setr.emergency
-       ? 'The setter dug it, so the setter cannot set it. The right side takes the second ball instead and the setter becomes an attacker. Teams that have not rehearsed this lose the rally right here.'
-       : 'Blockers land and pull off the net to start their approach. The setter is already moving to the target. Defence only counts if it turns into an attack.',
-     zones:(()=>{
-       const o = blend(S, switchedBase(ctx.lu), .8);
-       o[setr.zone] = {p:[.7,1.9], pose:'set',
-         tag:setr.emergency ? 'Emergency setter' : 'Setter',
-         note:setr.emergency ? EMERGENCY_NOTE : SET_NOTE};
-       return o;
-     })(),
-     opp:{OA:{p:[A[0],-2.4], pose:'ready'}},
-     ballAt:setr.zone, ball:[.7,1.9,2.5], arc:1.9}
-  ];
-  return steps;
-}
-
-function scReceive(ctx){
-  const lu = ctx.lu;
-  const recvSwitch = switchMap(lu);
+/* --- serve receive: three passers in lanes, everyone else off the net --- */
+function recvShape(ctx){
+  const lu = ctx.lu, sw = switchMap(lu);
   const setterZone = ZONES.find(z => lu[z] === 'S');
-  const passerZones = ZONES.filter(z =>
+  const passers = ZONES.filter(z =>
     lu[z] === 'OH1' || lu[z] === 'OH2' || lu[z] === 'L' ||
-    (!ctx.libero && lu[z].startsWith('MB') && isBack(z))
-  );
-  /* The libero (or the middle covering for them) owns the left lane and the
-     biggest share of the court. The other two fill middle and right. */
+    (!ctx.libero && lu[z].startsWith('MB') && isBack(z)));
   const LANE = {left:[-2.9,5.7], mid:[0,6.5], right:[2.9,5.7]};
-  const liberoZone = passerZones.find(z => lu[z] === 'L' || lu[z].startsWith('MB'));
-  const others = passerZones.filter(z => z !== liberoZone)
-    .sort((a,b) => BASE[recvSwitch[a]][0] - BASE[recvSwitch[b]][0]);
+  const libZone = passers.find(z => lu[z] === 'L' || lu[z].startsWith('MB'));
+  const rest = passers.filter(z => z !== libZone)
+    .sort((a,b) => BASE[sw[a]][0] - BASE[sw[b]][0]);
   const lane = {};
-  if(liberoZone) lane[liberoZone] = LANE.left;
-  [LANE.mid, LANE.right].forEach((sl,i) => { if(others[i]) lane[others[i]] = sl; });
-  passerZones.forEach(z => { if(!lane[z]) lane[z] = LANE.mid; });
+  if(libZone) lane[libZone] = LANE.left;
+  [LANE.mid, LANE.right].forEach((sl,i)=>{ if(rest[i]) lane[rest[i]] = sl; });
+  passers.forEach(z => { if(!lane[z]) lane[z] = LANE.mid; });
 
-  const recv = {};
+  const out = {};
   for(const z of ZONES){
     if(lane[z]){
-      const isLib = z === liberoZone;
-      recv[z] = {p:[...lane[z]], pose:'ready', tag:isLib ? 'Passer - left lane' : 'Passer',
-        note:isLib
-          ? 'Left lane is yours. You take the biggest share of the court, and after the pass you stay here: left back is where you live for the rest of the rally.'
-          : 'One of three passers. Call the ball early and take everything you can reach \u2014 a seam is only a seam if both of you wait.'};
+      out[z] = {p:[...lane[z]], pose:'ready',
+        tag: z === libZone ? 'Passer - left lane' : 'Passer',
+        note: z === libZone
+          ? 'Left lane is yours, and the biggest share of the court. After the pass you stay here: left back is where you live for the rest of the rally.'
+          : 'One of three passers. Call it early and take everything you can reach - a seam is only a seam if both of you wait.'};
     } else if(z === setterZone){
-      recv[z] = isBack(z)
+      out[z] = isBack(z)
         ? {p:[3.1,7.2], pose:'ready', tag:'Setter (back row)',
            note:'Hide at the right back corner, then release to the target the instant the server contacts the ball.'}
         : {p:[1.4,1.4], pose:'ready', tag:'Setter (front row)',
            note:'Start at the net right of the middle and open to the passer.'};
     } else {
-      recv[z] = {p:[BASE[recvSwitch[z]][0]*.92, 1.4], pose:'ready', tag:'Hitter',
+      out[z] = {p:[BASE[sw[z]][0]*.92, 1.5], pose:'ready', tag:'Hitter',
         note:'Not a passer. Get off the net early so you have room for a full approach.'};
     }
   }
-  const target = [-1.35,5.5];
-  const liberoLine = ctx.libero
-    ? 'The libero is one of the three passers, so your weakest passer is off the court entirely.'
-    : 'With the libero off, the back-row middle has to pass. They are a blocker by trade and this is the ball they least want. This is the single clearest argument for the libero.';
+  return out;
+}
 
-  const released = (()=>{
-    const o = {};
-    for(const z in recv) o[z] = {...recv[z]};
-    o[setterZone] = {...o[setterZone], p:[.7,1.9], pose:'ready'};
-    return o;
-  })();
+/* --- base: everyone switched, reading the setter --- */
+function baseShape(ctx){
+  const o = switchedBase(ctx.lu);
+  for(const z in o) o[z] = {...o[z], tag:isBack(z) ? 'Back row' : 'Front row',
+    note:'Reading the setter. Nobody commits until the ball has left their hands.'};
+  return o;
+}
 
-  /* After the pass the rotational shape is irrelevant: everyone goes to their
-     real position. This is the movement the rotation diagrams never show. */
-  const PIN = {P4:[-4.1,3.2], P3:[-.6,2.8], P2:[3.9,3.0]};
-  const afterPass = (phase)=>{
-    const sb = switchedBase(lu);
-    const o = {};
-    for(const z of ZONES){
-      const sl = recvSwitch[z];
-      if(z === setterZone){
-        o[z] = {...released[z], p:[.7,1.9], pose:'set', tag:'Setter', note:SET_NOTE};
-      } else if(PIN[sl]){
-        const hitting = phase === 'swing' && sl === 'P4';
-        o[z] = {...released[z],
-          p:hitting ? [-3.3,1.0] : [...PIN[sl]],
-          pose:hitting ? 'swing' : 'approach',
-          jump:hitting ? .8 : 0,
-          tag:sl === 'P3' ? 'Middle - to the middle' : sl === 'P4' ? 'Outside - to the pin' : 'Right pin',
-          note:sl === 'P3'
-            ? 'You block and hit from the middle of the net every rotation, whichever corner the serve found you in.'
-            : 'Off the net, then wide. Finish outside the antenna so you can see the whole block.'};
-      } else {
-        o[z] = {...released[z], p:[...sb[z].p], pose:'ready',
-          tag:sl === 'P5' ? 'Left back' : sl === 'P6' ? 'Middle back' : 'Right back',
-          note:sl === 'P5'
-            ? 'Left back. If you are the libero or the middle covering for them, this is your home for the rest of the rally.'
-            : 'Back row base. From here you are covering the attack, then defending the counter.'};
-      }
-    }
-    return o;
+/* --- defence against an attack from hitX: the block goes to the ball --- */
+function defShape(ctx, hitX){
+  const right = hitX >= 0;
+  const S = bySlot(right ? defRight(ctx.system) : mirrorSetup(defRight(ctx.system)), ctx.lu);
+  const inv = slotToZone(ctx.lu);
+  const pinZone = inv[right ? 'P2' : 'P4'], midZone = inv.P3;
+  const sgn = right ? 1 : -1;
+  /* outside hand just inside the hitter, middle closed shoulder to shoulder */
+  const px = clamp(hitX - .45*sgn, -4.1, 4.1);
+  const mx = clamp(px - .9*sgn, -4.1, 4.1);
+  const out = {...S};
+  if(out[pinZone]) out[pinZone] = {...out[pinZone], p:[px,.5], pose:'block', jump:.62};
+  if(out[midZone]) out[midZone] = {...out[midZone], p:[mx,.5], pose:'block', jump:.58};
+  return {zones:out, blockers:[pinZone, midZone]};
+}
+
+/* --- free ball: off the net, split the court into thirds --- */
+function freeShape(ctx){
+  const inv = slotToZone(ctx.lu), out = {};
+  const spot = {P4:[-3.2,3.1], P3:[-.2,3.0], P2:[3.0,3.1],
+                P5:[-3.1,6.6], P6:[0,7.0],   P1:[3.1,6.6]};
+  for(const slot in spot){
+    const z = inv[slot];
+    if(!z) continue;
+    out[z] = {p:[...spot[slot]], pose:'ready',
+      tag:isBack(z) ? 'Thirds' : 'Off the net',
+      note:isBack(z)
+        ? 'Split the back court into equal thirds so nobody has to cover a seam.'
+        : 'Off the net the moment the free ball is called, so you have room to approach.'};
+  }
+  return out;
+}
+
+/* --- our attack: setter to the target, one hitter swinging, everyone else in
+       the cup, because a blocked ball comes straight back down --- */
+function attackShape(ctx, setterZone, hitterZone, hitPt, phase){
+  const out = {};
+  const others = ZONES.filter(q => q !== setterZone && q !== hitterZone);
+  const front = others.filter(q => !isBack(q));
+  const back  = others.filter(q => isBack(q));
+  const cx = hitPt[0] > 0 ? -1 : 1;                 // the cup sits inside the hitter
+  const close = [[hitPt[0]+1.5*cx, 2.2], [hitPt[0]+3.0*cx, 2.6]];
+  const deep  = [[hitPt[0]+1.2*cx, 4.6], [hitPt[0]+3.5*cx, 5.2], [hitPt[0]+5.5*cx, 5.6]];
+
+  out[setterZone] = {p:[...TARGET], pose: phase === 'build' ? 'set' : 'ready',
+    tag:'Setter',
+    note:'Release to the target the instant the ball is up, and set from the same spot every time: predictable for your hitters, unreadable for their block.'};
+
+  if(phase === 'build')
+    out[hitterZone] = {p:[clamp(hitPt[0]*1.18,-4.3,4.3), 3.6], pose:'ready', tag:'Hitter',
+      note:'Start wide and deep. Approach into the ball, not across it - your angle decides your shot before you touch it.'};
+  else if(phase === 'swing')
+    out[hitterZone] = {p:[...hitPt], pose:'swing', jump:.82, tag:'Hitter',
+      note:'Swing high, and use their hands if the set is tight.'};
+  else
+    out[hitterZone] = {p:[hitPt[0], hitPt[1]+.6], pose:'ready', tag:'Hitter',
+      note:'Land, then straight back off the net. The rally is not over until the ball is down.'};
+
+  front.forEach((q,i)=>{
+    const sp = close[i] || close[close.length-1];
+    out[q] = {p:[clamp(sp[0],-4.3,4.3), sp[1]], pose:'ready', tag:'Close cup',
+      note:'Low, inside your hitter, hands below your knees. A blocked ball comes back fast and flat.'};
+  });
+  back.forEach((q,i)=>{
+    const sp = deep[i] || deep[deep.length-1];
+    out[q] = {p:[clamp(sp[0],-4.3,4.3), sp[1]], pose:'ready', tag:'Deep cup',
+      note:'Stand where a ball that beats the close cup will carry to.'};
+  });
+  return out;
+}
+
+const oppBase = ()=>({OS:{p:[-.9,-2.0], pose:'ready'},
+                      OA:{p:[-2.8,-1.2], pose:'ready'},
+                      OX:{p:[2.6,-1.2], pose:'ready'}});
+/* Their block forms opposite our hitter. x runs the same way on both sides of
+   the net, so a blocker facing a hitter stands at roughly the SAME x, not the
+   mirrored one - mirroring puts the block on the wrong side of the court. */
+const oppBlock = hitPt =>{
+  const sgn = hitPt[0] >= 0 ? 1 : -1;
+  const px = clamp(hitPt[0] - .35*sgn, -4, 4);     // outside hand on the hitter
+  const mx = clamp(px - .9*sgn, -4, 4);            // middle closes to them
+  return {
+    OS:{p:[clamp(-2.4*sgn, -4, 4), -2.9], pose:'ready'},
+    OA:{p:[px, -.5], pose:'block', jump:.6},
+    OX:{p:[mx, -.5], pose:'block', jump:.55}
   };
+};
 
-  return [
-    {t:0, phase:'Serve receive \u2014 set',
-     coach:'Three passers across the court, two hitters off the net, setter ready to release. ' + liberoLine,
-     zones:recv,
-     opp:{OS:{p:[2.2,-10.4], pose:'serve'}},
-     ball:[2.2,-10.2,2.4]},
+/* =============== one rally, built from the markers =============== */
+function buildRally(ctx, kind, m){
+  const R = roles(ctx);
+  const steps = [];
+  let t0, firstShape, firstPt;
 
-    {t:1.5, phase:'Ball in the air',
-     coach:'The serve is heading for the seam between two passers. Whoever can play it with their platform square to the target takes it \u2014 the other one backs them up instead of reaching across.',
-     zones:released, resp:true,
-     opp:{OS:{p:[2.2,-9.4], pose:'ready'}},
-     ball:[target[0],target[1],.9], arc:2.6},
+  if(kind === 'recv'){
+    const sv = m.serve, land = m.land;
+    firstShape = recvShape(ctx); firstPt = land;
+    steps.push({t:0, phase:'Serve',
+      coach:'Three passers, each owning a lane. Drag the server or the landing spot and watch who becomes responsible - the shape has to answer every serve, not just this one.',
+      zones:firstShape, opp:{...oppBase(), OS:{p:[...sv], pose:'serve'}},
+      ball:[sv[0], sv[1], 2.2]});
+    steps.push({t:1.25, phase:'Reception',
+      coach:'Whoever can play it with their platform square to the target takes it. The other two back them up instead of reaching across.',
+      zones:firstShape, resp:true, opp:oppBase(),
+      ball:[land[0], land[1], .95], arc:2.4});
+    t0 = 1.25;
 
-    {t:2.3, phase:'Pass',
-     coach:'Platform angled at the target, not at the ball. The pass wants to land about a metre off the net, just right of the middle.',
-     zones:released, resp:true,
-     opp:{OS:{p:[2.2,-9.0], pose:'ready'}},
-     ball:[target[0],target[1],.55]},
+  } else if(kind === 'attack'){
+    const st = m.setter, hit = m.hit;
+    const D = defShape(ctx, hit[0]);
+    const info = {blockers:D.blockers, att:'OA', az:3.2};
+    const sgn = hit[0] >= 0 ? 1 : -1;
+    const dig = [clamp(hit[0] + .95*sgn, -4.2, 4.2), 5.2];
+    firstShape = D.zones; firstPt = dig;
+    steps.push({t:0, phase:'Their setter has the ball',
+      coach:'Drag their setter, and drag where the set is going. The block travels to the ball and the back row builds its shape around the block, not around where the ball is now.',
+      zones:baseShape(ctx), opp:{...oppBase(), OS:{p:[...st], pose:'set'},
+        OA:{p:[clamp(hit[0]*.9,-4.3,4.3), hit[1]-3.2], pose:'ready'}},
+      ball:[st[0], st[1], 2.4]});
+    steps.push({t:1.4, phase:'Their swing',
+      coach:'Block is up and closed. The lit floor is every spot a hard swing can still reach, and covering it is the back row job.',
+      zones:D.zones, shadow:info,
+      opp:{...oppBase(), OS:{p:[...st], pose:'ready'}, OA:{p:[...hit], pose:'swing', jump:.82}},
+      ball:[hit[0], hit[1], 3.2], arc:1.0});
+    steps.push({t:2.35, phase:'Dig',
+      coach:'It lands in the lit strip, which is exactly where somebody should have been standing.',
+      zones:D.zones, shadow:info, resp:true,
+      opp:{...oppBase(), OA:{p:[...hit], pose:'swing', jump:.25}},
+      ball:[dig[0], dig[1], .5]});
+    t0 = 2.35;
 
-    {t:3.6, phase:'The switch',
-     coach:'The pass is away, and now everybody moves. Rotational order only mattered until the server struck the ball - from here each player goes to the job they actually play. Watch the middle: whichever corner the rotation left them in, they go to the middle of the net if they are front row, or to left back if they are not.',
-     zones:afterPass('approach'),
-     opp:{OS:{p:[2.2,-8.6], pose:'ready'}},
-     ballAt:setterZone, ball:[.7,1.9,2.55], arc:1.7},
+  } else {
+    const from = m.from, land = m.land;
+    firstShape = freeShape(ctx); firstPt = land;
+    steps.push({t:0, phase:'Free ball',
+      coach:'They have no attack. Everyone off the net at once and the back court splits into thirds. A free ball is a free point if you treat it like one.',
+      zones:firstShape, opp:{...oppBase(), OA:{p:[...from], pose:'pass'}},
+      ball:[from[0], from[1], 1.8]});
+    steps.push({t:1.35, phase:'Play it low',
+      coach:'No hurry and no block to beat. Play it low to the target and run a real attack off it.',
+      zones:firstShape, resp:true, opp:oppBase(),
+      ball:[land[0], land[1], .95], arc:2.1});
+    t0 = 1.35;
+  }
 
-    {t:4.8, phase:'Set to the pin',
-     coach:'Everyone is where they belong: middle in the middle, outside at the left pin, libero at left back. That shape is the same every rotation, which is the whole point of switching.',
-     zones:afterPass('swing'),
-     opp:{OS:{p:[2.2,-8.6], pose:'ready'}},
-     ballAt:slotToZone(lu).P4, ball:[-3.3,1.0,3.1], arc:1.0}
-  ];
-}
+  /* who makes the first contact decides who is allowed to set the second */
+  const predicted = whoTakes(firstPt, firstShape);
+  const setr = setterAfter(ctx, predicted);
+  const hitterZone = (R.pinL && R.pinL !== setr.zone && R.pinL !== predicted)
+    ? R.pinL : (R.pinR !== setr.zone ? R.pinR : R.mid);
+  const hitPt = (hitterZone === R.pinR) ? PIN_R : PIN_L;
+  const landOpp = [clamp(-hitPt[0]*.5 + 1.1, -4, 4), -5.4];
 
-function scCoverage(ctx){
-  const H = [-3.2,1.0];
-  const setterZone = ZONES.find(z => ctx.lu[z] === 'S');
-  const hitZone = slotToZone(ctx.lu).P4;
-  const CLOSE = 'Close cup. Low, inside 2 m of your hitter, hands below your knees \u2014 the blocked ball comes back fast and flat.';
-  const DEEP = 'Deep cup. Stand where a ball that beats the close cup will carry to, around 4\u20135 m behind the hitter.';
-  const build = (poseFor)=> bySlot({
-    P4:{p:[...H], pose:poseFor, tag:'Hitter', note:'Swing high and use the block if the set is tight.'},
-    P3:{p:[-1.6,2.25], pose:'ready', tag:'Close cup', note:CLOSE},
-    P2:{p:[-1.0,1.85], pose:'ready', tag:'Close cup', note:CLOSE},
-    P5:{p:[-2.9,3.7], pose:'ready', tag:'Deep cup', note:DEEP},
-    P6:{p:[-.6,4.9], pose:'ready', tag:'Deep cup', note:DEEP},
-    P1:{p:[1.5,5.7], pose:'ready', tag:'Deep cup', note:DEEP}
-  }, ctx.lu);
-  const landed = [-2.5,2.6];
+  steps.push({t:t0+1.05, phase:setr.emergency ? 'Setter dug it - right side sets' : 'Up to the target',
+    coach:setr.emergency
+      ? 'The setter played the first ball, so they are not allowed to touch it again. The right side steps in and sets instead. Teams that have not rehearsed this lose the rally here.'
+      : 'The setter is already at the target. Everyone who is not setting is either approaching or getting ready to cover.',
+    zones:attackShape(ctx, setr.zone, hitterZone, hitPt, 'build'),
+    opp:oppBase(), ballAt:setr.zone, ball:[TARGET[0], TARGET[1], 2.7], arc:1.3});
 
-  return [
-    {t:0, phase:'Our attack \u2014 cup forms',
-     coach:'The moment your hitter leaves the ground, everyone else stops attacking and starts covering. The cup is tight: most balls that come off the block land within 3 m of the attacker.',
-     zones:build('approach'),
-     opp:{OA:{p:[-3.0,-.6], pose:'block', jump:.6}, OX:{p:[-1.5,-.6], pose:'block', jump:.55}},
-     ball:[-3.2,1.0,3.0]},
+  steps.push({t:t0+2.1, phase:'Our swing',
+    coach:'Everyone who is not hitting is covering. The cup is tight because a blocked ball comes straight back down and lands within about three metres of the attacker.',
+    zones:attackShape(ctx, setr.zone, hitterZone, hitPt, 'swing'),
+    opp:oppBlock(hitPt), ball:[hitPt[0], hitPt[1], 3.15], arc:1.0});
 
-    {t:1.0, phase:'Swing',
-     coach:'Two blockers up on the other side. Low and still \u2014 if you are moving when the ball comes off the block, you will not get it.',
-     zones:build('swing'),
-     opp:{OA:{p:[-3.0,-.6], pose:'block', jump:.68}, OX:{p:[-1.5,-.6], pose:'block', jump:.6}},
-     ball:[-3.1,.75,3.05]},
+  steps.push({t:t0+3.0, phase:'It lands',
+    coach:'Through the block and down. A dig that turns into a real attack is the difference between surviving a rally and winning it.',
+    zones:attackShape(ctx, setr.zone, hitterZone, hitPt, 'land'),
+    opp:oppBlock(hitPt), ball:[landOpp[0], landOpp[1], .45]});
 
-    {t:1.9, phase:'Ball comes back',
-     coach:'Blocked. The ball drops almost straight down just behind the attack line.',
-     zones:build('swing'), resp:true,
-     opp:{OA:{p:[-3.0,-.6], pose:'ready'}, OX:{p:[-1.5,-.6], pose:'ready'}},
-     ball:[landed[0],landed[1],1.3]},
+  steps.push({t:t0+3.8, phase:'Point',
+    coach:'Rally finished. Drag a marker, or any player, and run it again from a different starting picture.',
+    zones:attackShape(ctx, setr.zone, hitterZone, hitPt, 'land'),
+    opp:oppBlock(hitPt), ball:[landOpp[0], landOpp[1], .16]});
 
-    {t:2.7, phase:'Cover dig',
-     coach:'Close cup plays it. Hands low, no swing at it \u2014 just keep it alive and high enough to run another attack.',
-     zones:build('ready'), resp:true,
-     opp:{OA:{p:[-3.0,-1.2], pose:'ready'}, OX:{p:[-1.5,-1.2], pose:'ready'}},
-     ball:[landed[0],landed[1],.5]}
-  ];
-}
-
-function scFreeBall(ctx){
-  const setterZone = ZONES.find(z => ctx.lu[z] === 'S');
-  const S = bySlot(defRight(ctx.system), ctx.lu);
-  const free = bySlot({
-    P2:{p:[2.4,3.1], pose:'ready', tag:'Off the net', note:'Free ball means get off the net immediately. You are a hitter again, not a blocker.'},
-    P3:{p:[0,3.2], pose:'ready', tag:'Off the net', note:'Back off to the 3 m line and open up. A middle who stays at the net is out of the next attack.'},
-    P4:{p:[-2.4,3.1], pose:'ready', tag:'Off the net', note:'Off the net and wide, ready to approach from outside the sideline.'},
-    P1:{p:[3.0,6.4], pose:'ready', tag:'Right back', note:'Split the court into thirds with the other two back-row players.'},
-    P6:{p:[0,7.0], pose:'ready', tag:'Middle back', note:'You have the deepest third. A free ball that drifts long is yours.'},
-    P5:{p:[-3.0,6.4], pose:'ready', tag:'Left back', note:'Split the court into thirds with the other two back-row players.'}
-  }, ctx.lu);
-  const land = [-1.2,5.3];
-  const setr = setterAfter(ctx, whoTakes(land, free));
-  const released = (()=>{
-    const o = {};
-    for(const z in free) o[z] = {...free[z]};
-    o[setr.zone] = {...o[setr.zone], p:[.7,1.9], pose:'ready',
-      tag:setr.emergency ? 'Emergency setter' : 'Setter',
-      note:setr.emergency ? EMERGENCY_NOTE : 'Free ball is the easiest set you will get all rally. Be at the target early and run your best option.'};
-    return o;
-  })();
-
-  return [
-    {t:0, phase:'Free ball called',
-     coach:'The opponent is sending it over with no attack. The whole team transitions at once: front row off the net, back row into thirds, setter to the target.',
-     zones:(()=>{
-       const o = {};
-       for(const z in S) o[z] = {p:[...S[z].p], pose:'ready', jump:0, tag:S[z].tag, note:S[z].note};
-       return o;
-     })(),
-     opp:{OA:{p:[1.0,-3.2], pose:'pass'}},
-     ball:[1.0,-3.2,1.6]},
-
-    {t:1.4, phase:'Transition',
-     coach:'Everyone moves on the call, not on the ball. The three back-row players split the court into equal thirds so nobody has to cover a seam under pressure.',
-     zones:released, resp:true,
-     opp:{OA:{p:[1.0,-3.6], pose:'ready'}},
-     ball:[land[0],land[1],1.0], arc:2.2},
-
-    {t:2.4, phase:'Pass',
-     coach:'Play it like a serve receive: square up, platform to the target, and let the setter do the rest.',
-     zones:released, resp:true,
-     opp:{OA:{p:[1.0,-3.6], pose:'ready'}},
-     ball:[land[0],land[1],.6]},
-
-    {t:3.5, phase:'Run the offence',
-     coach:'A free ball should produce your best attack of the rally. If it does not, the transition was too slow.',
-     zones:(()=>{
-       const o = {};
-       for(const z in released) o[z] = {...released[z]};
-       o[setr.zone] = {...o[setr.zone], pose:'set'};
-       for(const z of ZONES) if(o[z].tag === 'Off the net') o[z] = {...o[z], pose:'approach'};
-       return o;
-     })(),
-     opp:{OA:{p:[1.0,-3.6], pose:'ready'}},
-     ballAt:setr.zone, ball:[.7,1.9,2.55], arc:1.7}
-  ];
-}
-
-
-/* Defence to offence. The footwork follows the standard coaching sequence:
-   land on two feet, get off the net BEFORE getting wide, and turn and run
-   rather than back-pedal, which is slow and leaves a hitter too close to the
-   net to swing properly. The left side is the busiest path on the court:
-   outside hitters take well over half of all transition attempts. */
-function scTransition(ctx){
-  const lu = ctx.lu;
-  const inv = slotToZone(lu);
-  const setterZone = ZONES.find(z => lu[z] === 'S');
-  const setterFront = ['P2','P3','P4'].includes(setterZone);
-  const K = o => bySlot(o, lu);
-  const rightPin  = setterFront ? [.8,1.8] : [4.2,3.4];
-  const rightBack = setterFront ? [3.4,5.4] : [.8,1.8];
-
-  const N = {
-    out:'Off the net first, then wide. Turn and run instead of back-pedalling, and finish outside the antenna where you can see the whole court and the whole block.',
-    mid:'Land on two feet, then drop step, crossover, hop to clear the net. Run the quick even when you know you will not get the ball: a middle who stands still lets their blockers ignore you.',
-    pin:'Right pin transition, same order: off the net, then wide.',
-    set:'Release to the target the moment you see the dig is playable. About a metre off the net, just right of the middle.',
-    dig:'You dug it. Get your feet back under you, because in half a second you are part of the cup.',
-    back:'Stay in. The moment the set goes up you are covering, not watching.'
-  };
-
-  return [
-    {t:0, phase:'The dig is up',
-     coach:'The dig is up, and from this instant every player changes job. The three at the net stop being blockers and become hitters. The back row stops digging and starts thinking about covering.',
-     zones:K({
-       P4:{p:[-2.3,3.1], pose:'ready', tag:'Off-blocker', note:'You pulled off the net to defend. The second the ball is up you are a hitter again.'},
-       P3:{p:[-.2,.55], pose:'ready', tag:'Blocker', note:'Land on two feet. Reaching across and landing on one foot is how knees get hurt.'},
-       P2:{p:[2.7,.55], pose:'ready', tag:'Blocker', note:N.pin},
-       P5:{p:[-3.0,6.6], pose:'dig_low', tag:'Digger', note:N.dig},
-       P6:{p:[.2,7.4], pose:'ready', tag:'Middle back', note:N.back},
-       P1:{p:[3.1,6.2], pose:'ready', tag:'Right back', note:N.back}
-     }),
-     resp:true,
-     opp:{OA:{p:[2.6,-1.1], pose:'ready'}, OX:{p:[-1.0,-1.1], pose:'ready'}},
-     ball:[-3.0,6.3,.8]},
-
-    {t:1.3, phase:'Off the net, then wide',
-     coach:'Everybody runs at once. The outside goes out past the antenna, the middle clears the net and opens up for a quick, and the setter is already at the target. Getting off the net comes before getting wide, because a hitter who drifts sideways along the net has nowhere left to approach from.',
-     zones:K({
-       P4:{p:[-4.7,3.9], pose:'run', tag:'Outside, go wide', note:N.out},
-       P3:{p:[-.4,2.9], pose:'run', tag:'Middle, be available', note:N.mid},
-       P2:{p:rightPin, pose:setterFront ? 'ready' : 'run', tag:setterFront ? 'Setter' : 'Right pin', note:setterFront ? N.set : N.pin},
-       P5:{p:[-2.8,6.2], pose:'ready', tag:'Digger', note:N.dig},
-       P6:{p:[.2,6.6], pose:'ready', tag:'Middle back', note:N.back},
-       P1:{p:rightBack, pose:'ready', tag:setterFront ? 'Back-row option' : 'Setter', note:setterFront ? 'The setter is front row, so you are the back-row attack option. Stay behind the 3 m line.' : N.set}
-     }),
-     opp:{OA:{p:[-2.4,-1.4], pose:'run'}, OX:{p:[-.6,-1.2], pose:'run'}},
-     ballAt:setterZone, ball:[.8,1.9,2.7], arc:1.3},
-
-    {t:2.4, phase:'Setter at the target',
-     coach:'Three attackers are live and the other team has to respect all of them. That is the whole point of transition: if only one hitter gets there, their blockers only have one problem to solve.',
-     zones:K({
-       P4:{p:[-4.3,2.7], pose:'approach', tag:'Outside', note:N.out},
-       P3:{p:[-.9,2.1], pose:'approach', tag:'Middle', note:N.mid},
-       P2:{p:setterFront ? [.8,1.8] : [3.9,2.6], pose:setterFront ? 'set' : 'approach', tag:setterFront ? 'Setter' : 'Right pin', note:setterFront ? N.set : N.pin},
-       P5:{p:[-2.7,5.4], pose:'ready', tag:'Cover soon', note:N.back},
-       P6:{p:[.2,6.0], pose:'ready', tag:'Cover soon', note:N.back},
-       P1:{p:setterFront ? [3.4,5.4] : [.8,1.8], pose:setterFront ? 'ready' : 'set', tag:setterFront ? 'Back-row option' : 'Setter', note:setterFront ? N.back : N.set}
-     }),
-     opp:{OA:{p:[-2.9,-.6], pose:'ready'}, OX:{p:[-1.3,-.6], pose:'ready'}},
-     ballAt:setterZone, ball:[.8,1.9,2.6]},
-
-    {t:3.2, phase:'Set to the left pin',
-     coach:'The set goes outside. Your approach angle decides your shot before you ever touch the ball: come in sharp and you will hit sharp cross-court, come in square and the line opens up.',
-     zones:K({
-       P4:{p:[-3.9,1.7], pose:'approach', tag:'Outside', note:'Approach angle is shot selection. Sharp in, sharp cross-court.'},
-       P3:{p:[-1.5,2.0], pose:'ready', tag:'Close cup', note:'The quick is not coming. Turn and cover.'},
-       P2:{p:setterFront ? [-1.0,1.8] : [3.4,2.2], pose:'ready', tag:setterFront ? 'Close cup' : 'Right pin', note:setterFront ? 'Get low inside your hitter.' : N.pin},
-       P5:{p:[-2.9,4.2], pose:'ready', tag:'Deep cup', note:N.back},
-       P6:{p:[-.5,5.2], pose:'ready', tag:'Deep cup', note:N.back},
-       P1:{p:setterFront ? [2.4,5.0] : [-.8,2.6], pose:'ready', tag:'Cup', note:N.back}
-     }),
-     opp:{OA:{p:[-3.0,-.6], pose:'ready'}, OX:{p:[-1.6,-.6], pose:'ready'}},
-     ballAt:inv.P4, ball:[-3.3,.95,3.2], arc:.9},
-
-    {t:4.0, phase:'Swing and cover',
-     coach:'Everyone who is not hitting is covering. The cup is tight because a blocked ball comes straight back down and lands within about three metres of the attacker.',
-     zones:K({
-       P4:{p:[-3.3,.95], pose:'swing', jump:.82, tag:'Hitter', note:'Swing high, and use their hands if the set is tight.'},
-       P3:{p:[-1.6,2.2], pose:'ready', tag:'Close cup', note:'Low, hands below your knees, still. If you are moving you will not get it.'},
-       P2:{p:setterFront ? [-1.1,1.7] : [2.6,2.4], pose:'ready', tag:setterFront ? 'Close cup' : 'Cup', note:'Low and inside the hitter.'},
-       P5:{p:[-2.9,3.4], pose:'ready', tag:'Deep cup', note:'Stand where a ball that beats the close cup will carry to.'},
-       P6:{p:[-.6,4.6], pose:'ready', tag:'Deep cup', note:'Stand where a ball that beats the close cup will carry to.'},
-       P1:{p:[1.4,5.6], pose:'ready', tag:'Cup', note:N.back}
-     }),
-     opp:{OA:{p:[-3.0,-.6], pose:'block', jump:.62}, OX:{p:[-1.6,-.6], pose:'block', jump:.56}},
-     ballAt:inv.P4, ball:[-3.3,.95,3.2]},
-
-    {t:4.9, phase:'Through the block',
-     coach:'Transition done. A dig that turns into a real attack is the difference between surviving a rally and winning it, which is why the run off the net matters as much as the swing.',
-     zones:K({
-       P4:{p:[-3.3,1.4], pose:'ready', tag:'Hitter', note:'Land, then straight back off the net. The rally is not over.'},
-       P3:{p:[-1.6,2.2], pose:'ready', tag:'Close cup', note:'Hold the cup until the ball is on their floor.'},
-       P2:{p:setterFront ? [-1.1,1.7] : [2.6,2.4], pose:'ready', tag:'Cup', note:'Hold the cup.'},
-       P5:{p:[-2.9,3.4], pose:'ready', tag:'Deep cup', note:'Hold the cup.'},
-       P6:{p:[-.6,4.6], pose:'ready', tag:'Deep cup', note:'Hold the cup.'},
-       P1:{p:[1.4,5.6], pose:'ready', tag:'Cup', note:'Hold the cup.'}
-     }),
-     opp:{OA:{p:[-3.0,-.6], pose:'ready'}, OX:{p:[-1.6,-.6], pose:'ready'}},
-     ball:[2.3,-5.4,.6], arc:1.1}
-  ];
+  return steps;
 }
 
 const SCENARIOS = [
-  {id:'recv',  name:'Serve receive',           sub:'Three passers, seam responsibility', build:ctx => scReceive(ctx)},
-  {id:'right', name:'Attack on our right',     sub:'Outside hit, block and dig',         build:ctx => scDefense(ctx,'right','hard')},
-  {id:'left',  name:'Attack on our left',      sub:'Mirror image of the right side',     build:ctx => scDefense(ctx,'left','hard')},
-  {id:'tip',   name:'Tip over the block',      sub:'Where perimeter breaks down',        build:ctx => scDefense(ctx,'right','tip')},
-  {id:'mid',   name:'Opponent middle quick',   sub:'Fast ball, single blocker',          build:ctx => scMiddle(ctx)},
-  {id:'cover', name:'Cover our own hitter',    sub:'The cup around the attacker',        build:ctx => scCoverage(ctx)},
-  {id:'free',  name:'Free ball transition',    sub:'Off the net, into thirds',           build:ctx => scFreeBall(ctx)},
-  {id:'trans', name:'Defence to offence',      sub:'Dig, run off the net, attack',       build:ctx => scTransition(ctx)}
+  {id:'recv',   name:'Serve receive', sub:'Move the server and where it lands',
+   build:(ctx,m) => buildRally(ctx,'recv',m)},
+  {id:'attack', name:'Their attack',  sub:'Move their setter and the set',
+   build:(ctx,m) => buildRally(ctx,'attack',m)},
+  {id:'free',   name:'Free ball',     sub:'Move where it comes over',
+   build:(ctx,m) => buildRally(ctx,'free',m)}
 ];
 
-function scMiddle(ctx){
-  const S = bySlot(defMiddle(ctx.system), ctx.lu);
-  const inv = slotToZone(ctx.lu);
-  const A = [.2,-.45,3.2];
-  const info = {blockers:['P3','P2'].map(sl => inv[sl]), att:'OA', az:A[2]};
-  const land = [-2.6,5.4];
-  const setr = setterAfter(ctx, whoTakes(land, S));
-
-  return [
-    {t:0, phase:'Quick is coming',
-     coach:'The opponent middle is already in the air as the setter touches the ball. You will not have time to watch the set \u2014 you have to have read it.',
-     zones:switchedBase(ctx.lu),
-     opp:{OS:{p:[1.1,-1.7], pose:'set'}, OA:{p:[.4,-2.2], pose:'approach'}},
-     ball:[1.1,-1.7,2.3]},
-
-    {t:.9, phase:'One blocker, maybe two',
-     coach:'Against a true quick your middle is usually alone. The pin blocker helps only if the set is slower than it looked.',
-     zones:blend(switchedBase(ctx.lu), S, .75),
-     opp:{OS:{p:[1.1,-1.7], pose:'ready'}, OA:{p:[.25,-1.1], pose:'swing', jump:.8}},
-     ball:[A[0],A[1],A[2]], arc:.5},
-
-    {t:1.7, phase:'Contact',
-     coach:'A quick is hit flat and from close to the net, so the block is narrower and more of the floor stays lit. Back row starts lower than against an outside set.',
-     zones:S, shadow:info,
-     opp:{OA:{p:[A[0],A[1]], pose:'swing', jump:.8}},
-     ball:[A[0],A[1],A[2]]},
-
-    {t:2.5, phase:'Dig',
-     coach:'It beats the single block into the deep angle. Both deep defenders are standing in the lit floor for exactly this ball.',
-     zones:S, shadow:info, resp:true,
-     opp:{OA:{p:[A[0],A[1]], pose:'ready'}},
-     ball:[land[0],land[1],.5]},
-
-    {t:3.6, phase:'Transition',
-     coach:'Middle lands and turns straight into their own approach. The faster your middle transitions, the more the opponent has to respect.',
-     zones:(()=>{
-       const o = blend(S, switchedBase(ctx.lu), .8);
-       o[setr.zone] = {p:[.7,1.9], pose:'set',
-         tag:setr.emergency ? 'Emergency setter' : 'Setter',
-         note:setr.emergency ? EMERGENCY_NOTE : SET_NOTE};
-       return o;
-     })(),
-     opp:{OA:{p:[A[0],-2.2], pose:'ready'}},
-     ballAt:setr.zone, ball:[.7,1.9,2.5], arc:1.9}
-  ];
-}
+/* the two draggable markers per situation, and where each is allowed to go */
+const MARK_DEF = {
+  recv:   [{k:'serve', label:'Server',        col:0xff6274, lim:[-4.4,4.4,-12.6,-9.3]},
+           {k:'land',  label:'Lands',         col:0xff8c2b, lim:[-4.3,4.3,.7,8.7]}],
+  attack: [{k:'setter',label:'Their setter',  col:0xff6274, lim:[-4.2,4.2,-4.6,-.5]},
+           {k:'hit',   label:'Set goes here', col:0xffd166, lim:[-4.2,4.2,-2.4,-.4]}],
+  free:   [{k:'from',  label:'Comes from',    col:0xff6274, lim:[-4.2,4.2,-8.5,-.6]},
+           {k:'land',  label:'Lands',         col:0xff8c2b, lim:[-4.3,4.3,.7,8.7]}]
+};
 
 /* =============== state =============== */
 const ui = {
-  scenario:'right', rotation:1, system:'perimeter', libero:true,
+  scenario:'recv', rotation:1, system:'perimeter', libero:true,
+  marks:{
+    recv:   {serve:[-2.4,-10.0], land:[-2.6,5.6]},
+    attack: {setter:[-.9,-1.9],  hit:[3.1,-.55]},
+    free:   {from:[1.6,-3.6],    land:[-.6,5.4]}
+  },
   showOpen:true, showCross:true, showTrails:true, showLabels:true, focus:'',
   overrides:{},
   playing:true, t:0, speed:1
 };
 let steps = [], duration = 1, ctx = null, probePoint = null;
 
+/* Regenerate the rally from the current markers. Cheap enough to run on every
+   pointer move while a marker is being dragged. */
+function rebuildSteps(){
+  const sc = SCENARIOS.find(s => s.id === ui.scenario);
+  steps = sc.build(ctx, ui.marks[ui.scenario]);
+  duration = steps[steps.length-1].t + .9;
+  lastResp = null;
+  if(probePoint) answerProbe();
+}
 function rebuild(){
   ui.overrides = {};
   refreshMoved();
   const {lu, hidden} = lineup(ui.rotation, ui.libero);
   ctx = {rotation:ui.rotation, system:ui.system, libero:ui.libero, lu, hidden};
-  const sc = SCENARIOS.find(s => s.id === ui.scenario);
-  steps = sc.build(ctx);
-  lastPoseT = -99; lastResp = null;            // new clip: take the first frame as given
-  duration = steps[steps.length-1].t + .9;
+  rebuildSteps();
+  lastPoseT = -99;                   // new clip: take the first frame as given
   refreshLabels();
   refreshFocusList();
-  if(probePoint) answerProbe();
+  refreshMarks();
 }
 
 function refreshLabels(){
@@ -1987,6 +1841,15 @@ function frame(dt){
   } else {
     landCross.visible = false;
   }
+
+  const mdefs = MARK_DEF[ui.scenario] || [];
+  marks.forEach((mk,i)=>{
+    const d = mdefs[i];
+    mk.visible = !!d;
+    if(!d) return;
+    const pt = ui.marks[ui.scenario][d.k];
+    mk.position.set(pt[0], 0, pt[1]);
+  });
 
   const focusRole = focus ? ctx.lu[focus] : null;
   const focusCol = focusRole === 'L' ? COL.lib : focusRole === 'S' ? COL.setter : COL.team;
