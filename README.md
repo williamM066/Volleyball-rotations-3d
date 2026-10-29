@@ -207,6 +207,16 @@ from the net (`0`) to the endline (`9`). The attack line is at `y = 3`.
 - Responsibility is sticky. Two players who are nearly tied used to swap it
   frame to frame, and since the ball snaps to whoever holds it, it flickered
   between two pairs of hands.
+- The contact pull on the ball eases off over about a third of a second after
+  a contact. Releasing it in a single frame, which is what happened when
+  responsibility switched off, made the ball jump back onto its path - the
+  stutter you see when the setter plays it.
+- A front-row middle runs their approach even when the set is going outside.
+  Standing and watching lets the opposing middle blocker leave early and
+  double the pin, so a decoy quick is part of the attack, not decoration.
+- A serve contact is instant; the server drops out of the serve pose within a
+  fraction of a second and follows the ball in, rather than holding the pose
+  for the whole flight and then teleporting onto the court.
 - Cup and cover spots are handed out in the order players already stand in,
   left to right, not by zone number. Handing them out by zone number made two
   players swap ends of the court on the way into the cup, crossing straight
