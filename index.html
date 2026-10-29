@@ -1298,7 +1298,7 @@ function freeShape(ctx){
 
 /* --- our attack: setter to the target, one hitter swinging, everyone else in
        the cup, because a blocked ball comes straight back down --- */
-function attackShape(ctx, setterZone, hitterZone, hitPt, phase){
+function attackShape(ctx, setterZone, hitterZone, hitPt, phase, prev){
   const out = {};
   const others = ZONES.filter(q => q !== setterZone && q !== hitterZone);
   const front = others.filter(q => !isBack(q));
@@ -1306,6 +1306,15 @@ function attackShape(ctx, setterZone, hitterZone, hitPt, phase){
   const cx = hitPt[0] > 0 ? -1 : 1;                 // the cup sits inside the hitter
   const close = [[hitPt[0]+1.5*cx, 2.2], [hitPt[0]+3.0*cx, 2.6]];
   const deep  = [[hitPt[0]+1.2*cx, 4.6], [hitPt[0]+3.5*cx, 5.2], [hitPt[0]+5.5*cx, 5.6]];
+
+  /* Hand the cup spots out in the order the players already stand in, left to
+     right. Handing them out by zone number instead makes two players swap ends
+     of the court on the way into the cup, crossing straight through each
+     other - which is exactly what reads as teleporting. */
+  const px = q => (prev && prev[q]) ? prev[q].p[0] : 0;
+  const order = zs => zs.slice().sort((a,b) => px(a) - px(b));
+  const closeS = close.slice().sort((a,b) => a[0] - b[0]);
+  const deepS  = deep.slice().sort((a,b) => a[0] - b[0]);
 
   out[setterZone] = {p:[...TARGET], pose: phase === 'build' ? 'set' : 'ready',
     tag:'Setter',
@@ -1321,13 +1330,13 @@ function attackShape(ctx, setterZone, hitterZone, hitPt, phase){
     out[hitterZone] = {p:[hitPt[0], hitPt[1]+.6], pose:'ready', tag:'Hitter',
       note:'Land, then straight back off the net. The rally is not over until the ball is down.'};
 
-  front.forEach((q,i)=>{
-    const sp = close[i] || close[close.length-1];
+  order(front).forEach((q,i)=>{
+    const sp = closeS[i] || closeS[closeS.length-1];
     out[q] = {p:[clamp(sp[0],-4.3,4.3), sp[1]], pose:'ready', tag:'Close cup',
       note:'Low, inside your hitter, hands below your knees. A blocked ball comes back fast and flat.'};
   });
-  back.forEach((q,i)=>{
-    const sp = deep[i] || deep[deep.length-1];
+  order(back).forEach((q,i)=>{
+    const sp = deepS[i] || deepS[deepS.length-1];
     out[q] = {p:[clamp(sp[0],-4.3,4.3), sp[1]], pose:'ready', tag:'Deep cup',
       note:'Stand where a ball that beats the close cup will carry to.'};
   });
@@ -1416,26 +1425,58 @@ function buildRally(ctx, kind, m){
   const hitPt = (hitterZone === R.pinR) ? PIN_R : PIN_L;
   const landOpp = [clamp(-hitPt[0]*.5 + 1.1, -4, 4), -5.4];
 
-  steps.push({t:t0+1.05, phase:setr.emergency ? 'Setter dug it - right side sets' : 'Up to the target',
+  /* A setter hiding in the right back corner is nearly six metres from the
+     target. Real setters start that run when the serve is struck, not when
+     the pass goes up, so by the time the first ball is played they are most
+     of the way there. Without this they covered it in one second flat. */
+  if(steps[1] && steps[1].zones[setr.zone]){
+    const from = steps[1].zones[setr.zone].p;
+    steps[1] = {...steps[1], zones:{...steps[1].zones,
+      [setr.zone]:{...steps[1].zones[setr.zone],
+        p:[from[0] + (TARGET[0]-from[0])*.62, from[1] + (TARGET[1]-from[1])*.62],
+        tag:'Setter, releasing',
+        note:'Release to the target the instant the ball is struck. Waiting to see the pass first is what makes setters late.'}}};
+  }
+
+  /* Same for the hitter: an outside who is not playing the first ball starts
+     transitioning to the pin as soon as the ball has gone past them, rather
+     than standing still and then sprinting the whole way in one second. */
+  if(hitterZone !== predicted && steps[1] && steps[1].zones[hitterZone]){
+    const from = steps[1].zones[hitterZone].p;
+    const to = [clamp(hitPt[0]*1.18,-4.3,4.3), 3.6];
+    steps[1] = {...steps[1], zones:{...steps[1].zones,
+      [hitterZone]:{...steps[1].zones[hitterZone],
+        p:[from[0] + (to[0]-from[0])*.5, from[1] + (to[1]-from[1])*.5],
+        tag:'Hitter, transitioning',
+        note:'Not your ball. Get off the net and out wide now, so you have a full approach when the set comes.'}}};
+  }
+
+  /* each shape is laid out from the one before it, so nobody is re-sorted
+     into a different corner of the court half way through the rally */
+  const shBuild = attackShape(ctx, setr.zone, hitterZone, hitPt, 'build', firstShape);
+  const shSwing = attackShape(ctx, setr.zone, hitterZone, hitPt, 'swing', shBuild);
+  const shLand  = attackShape(ctx, setr.zone, hitterZone, hitPt, 'land',  shBuild);
+
+  steps.push({t:t0+1.25, phase:setr.emergency ? 'Setter dug it - right side sets' : 'Up to the target',
     coach:setr.emergency
       ? 'The setter played the first ball, so they are not allowed to touch it again. The right side steps in and sets instead. Teams that have not rehearsed this lose the rally here.'
       : 'The setter is already at the target. Everyone who is not setting is either approaching or getting ready to cover.',
-    zones:attackShape(ctx, setr.zone, hitterZone, hitPt, 'build'),
+    zones:shBuild,
     opp:oppBase(), ballAt:setr.zone, ball:[TARGET[0], TARGET[1], 2.7], arc:1.3});
 
-  steps.push({t:t0+2.1, phase:'Our swing',
+  steps.push({t:t0+2.4, phase:'Our swing',
     coach:'Everyone who is not hitting is covering. The cup is tight because a blocked ball comes straight back down and lands within about three metres of the attacker.',
-    zones:attackShape(ctx, setr.zone, hitterZone, hitPt, 'swing'),
+    zones:shSwing,
     opp:oppBlock(hitPt), ball:[hitPt[0], hitPt[1], 3.15], arc:1.0});
 
-  steps.push({t:t0+3.0, phase:'It lands',
+  steps.push({t:t0+3.3, phase:'It lands',
     coach:'Through the block and down. A dig that turns into a real attack is the difference between surviving a rally and winning it.',
-    zones:attackShape(ctx, setr.zone, hitterZone, hitPt, 'land'),
+    zones:shLand,
     opp:oppBlock(hitPt), ball:[landOpp[0], landOpp[1], .45]});
 
-  steps.push({t:t0+3.8, phase:'Point',
+  steps.push({t:t0+4.1, phase:'Point',
     coach:'Rally finished. Drag a marker, or any player, and run it again from a different starting picture.',
-    zones:attackShape(ctx, setr.zone, hitterZone, hitPt, 'land'),
+    zones:shLand,
     opp:oppBlock(hitPt), ball:[landOpp[0], landOpp[1], .16]});
 
   return steps;
@@ -1658,8 +1699,12 @@ function sample(t){
      a player could really cover - if it is out of reach it drops, which is the
      whole point of the perimeter-versus-middle-up comparison. */
   let resp = null, respOk = true;
-  if(!a.resp) lastResp = null;
-  if(a.resp){
+  /* Responsibility only means anything while the ball is low enough to be
+     played. Without this the passer stayed "responsible" for the whole flight
+     of their own pass and got dragged across the court after it. */
+  const playable = a.resp && bp[2] < 1.6;
+  if(!playable) lastResp = null;
+  if(playable){
     const setup = {};
     for(const z of ZONES){
       const d = zones[z];

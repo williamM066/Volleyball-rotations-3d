@@ -207,6 +207,19 @@ from the net (`0`) to the endline (`9`). The attack line is at `y = 3`.
 - Responsibility is sticky. Two players who are nearly tied used to swap it
   frame to frame, and since the ball snaps to whoever holds it, it flickered
   between two pairs of hands.
+- Cup and cover spots are handed out in the order players already stand in,
+  left to right, not by zone number. Handing them out by zone number made two
+  players swap ends of the court on the way into the cup, crossing straight
+  through each other at nearly 6 m/s - which reads as teleporting, not as
+  volleyball.
+- The setter releases to the target during the serve, and a hitter who is not
+  playing the first ball starts transitioning while the ball is still in the
+  air. Both of those are what real players do, and both exist because without
+  them the same movement had to happen in one second afterwards. Worst
+  movement anywhere is now about 3.4 m/s, down from 5.6.
+- Responsibility for a ball only applies while it is below 1.6 m. Without that
+  gate a passer stayed responsible for the whole flight of their own pass and
+  got dragged across the court after it.
 - x runs the same way on both sides of the net, so a blocker facing a hitter
   stands at roughly the SAME x, not the mirrored one. Mirroring it puts the
   block on the wrong side of the court, which is easy to miss on screen.
