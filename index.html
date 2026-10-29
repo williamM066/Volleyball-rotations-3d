@@ -1,0 +1,2194 @@
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>Volleyball Court Vision</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: full-bleed 3D court with floating telemetry panels &mdash; rail left, coaching note right, transport along the bottom. */
+:root{
+  --bg:#050a14;
+  --panel:rgba(9,19,34,.86);
+  --panel-solid:#0a1524;
+  --line:#17324f;
+  --fg:#dbe8f7;
+  --muted:#7d99b7;
+  --accent:#4fb2ff;
+  --accent-dim:#1d4f7d;
+  --warn:#ffd166;
+  --danger:#ff6274;
+  --good:#6ef0a8;
+  --font-display:'Barlow Condensed','Oswald',system-ui,sans-serif;
+  --font-body:'IBM Plex Sans',system-ui,sans-serif;
+  --font-mono:'IBM Plex Mono',ui-monospace,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{height:100%;margin:0}
+body{
+  background:var(--bg);
+  color:var(--fg);
+  font-family:var(--font-body);
+  overflow:hidden;
+}
+#scene{position:fixed;inset:0;display:block;width:100%;height:100%}
+
+#ui{
+  position:relative;
+  height:100%;
+  display:grid;
+  grid-template-columns:auto 1fr auto;
+  grid-template-rows:1fr auto;
+  gap:12px;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-block:14px;
+  pointer-events:none;
+}
+#ui > *{pointer-events:auto}
+
+.panel{
+  background:var(--panel);
+  border:1px solid var(--line);
+  border-radius:10px;
+  backdrop-filter:blur(14px);
+  -webkit-backdrop-filter:blur(14px);
+}
+
+/* ---- left rail ---- */
+#rail{
+  grid-column:1;grid-row:1;
+  width:252px;
+  display:flex;flex-direction:column;gap:14px;
+  padding:14px;
+  overflow-y:auto;
+  max-height:100%;
+  min-height:0;
+}
+.brand{display:flex;flex-direction:column;gap:2px;margin-bottom:2px}
+.brand h1{
+  font-family:var(--font-display);
+  font-size:25px;line-height:1;margin:0;
+  letter-spacing:.012em;text-transform:uppercase;
+}
+.brand p{margin:0;font-size:11.5px;color:var(--muted);line-height:1.45}
+
+fieldset{border:0;padding:0;margin:0;display:flex;flex-direction:column;gap:7px}
+legend{
+  font-family:var(--font-mono);
+  font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--muted);padding:0;margin-bottom:1px;
+}
+.scn{display:flex;flex-direction:column;gap:5px}
+.scn button{
+  text-align:left;
+  font:500 12.5px/1.3 var(--font-body);
+  color:var(--fg);
+  background:rgba(79,178,255,.05);
+  border:1px solid var(--line);
+  border-radius:7px;
+  padding:8px 10px;
+  cursor:pointer;
+  transition:background .14s,border-color .14s;
+}
+.scn button:hover{background:rgba(79,178,255,.13)}
+.scn button[aria-pressed="true"]{
+  background:rgba(79,178,255,.2);
+  border-color:var(--accent);
+  color:#fff;
+}
+.scn small{display:block;color:var(--muted);font-size:10.5px;margin-top:2px;font-weight:400}
+.scn button[aria-pressed="true"] small{color:#a9cdf0}
+
+.seg{display:flex;gap:4px;flex-wrap:wrap}
+.seg button{
+  flex:1 1 auto;min-width:0;
+  font:600 12px/1 var(--font-mono);
+  color:var(--muted);
+  background:rgba(79,178,255,.05);
+  border:1px solid var(--line);
+  border-radius:6px;padding:7px 4px;cursor:pointer;
+  transition:background .14s,color .14s,border-color .14s;
+}
+.seg button:hover{color:var(--fg)}
+.seg button[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:#04121f}
+
+.sw{display:flex;align-items:center;gap:9px;cursor:pointer;font-size:12.5px;user-select:none}
+.sw input{appearance:none;margin:0;width:34px;height:19px;flex:0 0 34px;border-radius:19px;background:#16283f;border:1px solid var(--line);position:relative;cursor:pointer;transition:background .16s}
+.sw input::after{content:"";position:absolute;top:2px;left:2px;width:13px;height:13px;border-radius:50%;background:var(--muted);transition:transform .16s,background .16s}
+.sw input:checked{background:var(--accent-dim);border-color:var(--accent)}
+.sw input:checked::after{transform:translateX(15px);background:var(--accent)}
+.sw input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.sw .hint{color:var(--muted);font-size:10.5px;display:block;margin-top:1px}
+
+.hintline{margin:0;font-size:10.5px;line-height:1.45;color:var(--muted)}
+.ghost{
+  font:600 11.5px var(--font-body);color:var(--warn);
+  background:rgba(255,209,102,.1);border:1px solid rgba(255,209,102,.35);
+  border-radius:6px;padding:7px 9px;cursor:pointer;text-align:left;
+}
+.ghost:hover{background:rgba(255,209,102,.2)}
+select{
+  width:100%;font:500 12px var(--font-body);color:var(--fg);
+  background:var(--panel-solid);border:1px solid var(--line);
+  border-radius:6px;padding:7px 8px;cursor:pointer;
+}
+
+/* ---- right note card ---- */
+#note{
+  grid-column:3;grid-row:1;
+  width:306px;
+  padding:14px;
+  display:flex;flex-direction:column;gap:11px;
+  overflow-y:auto;max-height:100%;min-height:0;
+  align-self:start;
+}
+#phase{font-family:var(--font-mono);font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent)}
+#coach{font-size:13px;line-height:1.52;margin:0}
+.who{
+  border-top:1px solid var(--line);
+  padding-top:11px;display:flex;flex-direction:column;gap:6px;
+}
+.who h3{
+  margin:0;font-family:var(--font-display);font-size:16px;
+  text-transform:uppercase;letter-spacing:.03em;
+}
+.who .tag{
+  display:inline-block;align-self:flex-start;
+  font:500 9.5px/1 var(--font-mono);letter-spacing:.1em;text-transform:uppercase;
+  padding:4px 7px;border-radius:4px;background:rgba(79,178,255,.16);color:var(--accent);
+}
+.who p{margin:0;font-size:12.5px;line-height:1.5;color:#c3d6ea}
+.areahint{margin:0;font-size:11.5px;line-height:1.5;color:var(--warn)}
+.probe{font-size:11.5px;color:var(--muted);line-height:1.45;border-top:1px dashed var(--line);padding-top:9px}
+.probe b{color:var(--warn);font-weight:600}
+
+.legend{display:flex;flex-wrap:wrap;gap:4px 12px;border-top:1px solid var(--line);padding-top:10px}
+.legend span{display:flex;align-items:center;gap:5px;font-size:10.5px;color:var(--muted);font-family:var(--font-mono)}
+.dot{width:8px;height:8px;border-radius:50%;flex:0 0 8px}
+
+/* ---- transport ---- */
+#transport{
+  grid-column:1 / -1;grid-row:2;
+  display:flex;align-items:center;gap:12px;
+  padding:9px 13px;
+}
+#play{
+  flex:0 0 auto;width:36px;height:36px;border-radius:50%;
+  background:var(--accent);border:0;color:#04121f;cursor:pointer;
+  font-size:14px;display:grid;place-items:center;
+}
+#play:hover{filter:brightness(1.12)}
+#scrub{flex:1 1 auto;min-width:0;accent-color:var(--accent);cursor:pointer;height:4px}
+#clock{font-family:var(--font-mono);font-size:11.5px;color:var(--muted);flex:0 0 auto;font-variant-numeric:tabular-nums}
+#speed{width:auto;flex:0 0 auto;padding:5px 7px;font-size:11px}
+.tip{flex:0 0 auto;font-size:11px;color:var(--muted);display:flex;align-items:center;gap:6px}
+kbd{font:500 10px var(--font-mono);background:#13263c;border:1px solid var(--line);border-radius:4px;padding:2px 5px;color:var(--fg)}
+
+#railToggle{
+  display:none;position:fixed;left:max(16px,env(safe-area-inset-left,0px));top:calc(14px + env(safe-area-inset-top,0px));
+  z-index:5;background:var(--panel);border:1px solid var(--line);color:var(--fg);
+  border-radius:8px;padding:9px 13px;font:600 12px var(--font-body);cursor:pointer;
+  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+}
+
+button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+@media (max-width:1080px){
+  #rail{width:216px}
+  #note{width:260px}
+}
+@media (max-width:860px){
+  #ui{grid-template-columns:1fr;grid-template-rows:1fr auto auto;gap:9px}
+  #railToggle{display:block}
+  #rail{
+    grid-column:1;grid-row:1;
+    position:fixed;left:max(16px,env(safe-area-inset-left,0px));
+    top:calc(62px + env(safe-area-inset-top,0px));
+    width:min(300px,calc(100vw - 32px));
+    max-height:calc(100% - 180px);
+    z-index:4;
+  }
+  #note{grid-column:1;grid-row:2;width:auto;max-height:34vh;align-self:stretch}
+  #transport{grid-row:3;flex-wrap:wrap;gap:9px}
+  .tip{display:none}
+  #scrub{order:3;flex-basis:100%}
+}
+@media (prefers-reduced-motion:reduce){*{transition-duration:.01ms!important}}
+</style>
+
+<canvas id="scene"></canvas>
+
+<button id="railToggle" aria-expanded="true">Controls</button>
+
+<div id="ui">
+  <div id="rail" class="panel">
+    <div class="brand">
+      <h1>Court Vision</h1>
+      <p>5-1 movement, defence and transition. Drag players to move them; click bare floor to ask who takes a ball there.</p>
+    </div>
+
+    <fieldset>
+      <legend>Scenario</legend>
+      <div class="scn" id="scnList"></div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Rotation</legend>
+      <div class="seg" id="rotSeg"></div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Back-row system</legend>
+      <div class="seg" id="sysSeg">
+        <button data-sys="perimeter" aria-pressed="true">Perimeter</button>
+        <button data-sys="rotational" aria-pressed="false">Middle up</button>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Options</legend>
+      <label class="sw">
+        <input type="checkbox" id="libero" checked>
+        <span>Libero on court
+          <span class="hint" id="liberoHint">Replaces the back-row middle</span>
+        </span>
+      </label>
+      <label class="sw">
+        <input type="checkbox" id="showOpen" checked>
+        <span>Area to defend</span>
+      </label>
+      <label class="sw">
+        <input type="checkbox" id="showCross" checked>
+        <span>Landing cross</span>
+      </label>
+      <label class="sw">
+        <input type="checkbox" id="showTrails" checked>
+        <span>Movement trails</span>
+      </label>
+      <label class="sw">
+        <input type="checkbox" id="showLabels" checked>
+        <span>Player labels</span>
+      </label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Positions</legend>
+      <p class="hintline">Drag any player to move them. The lit floor and the
+        &ldquo;who takes it&rdquo; answer update as you go.</p>
+      <button id="resetPos" class="ghost" hidden>Put <span id="movedN">0</span> back</button>
+    </fieldset>
+
+    <fieldset>
+      <legend>Follow one player</legend>
+      <select id="focus"><option value="">Whole team</option></select>
+    </fieldset>
+  </div>
+
+  <div id="note" class="panel">
+    <div id="phase">Phase</div>
+    <p id="coach">Loading the court&hellip;</p>
+    <div class="who" id="whoBox" hidden>
+      <span class="tag" id="whoTag">Role</span>
+      <h3 id="whoName">&mdash;</h3>
+      <p id="whoNote"></p>
+      <p class="areahint" id="areaHint" hidden></p>
+    </div>
+    <div class="probe" id="probe" hidden></div>
+    <div class="legend">
+      <span><i class="dot" style="background:#4fb2ff"></i>Team</span>
+      <span><i class="dot" style="background:#6ef0a8"></i>Setter</span>
+      <span><i class="dot" style="background:#ffd166"></i>Libero</span>
+      <span><i class="dot" style="background:#ff6274"></i>Opponent</span>
+      <span><i class="dot" style="background:#ff8c2b"></i>Area to defend</span>
+    </div>
+  </div>
+
+  <div id="transport" class="panel">
+    <button id="play" aria-label="Play or pause">&#9654;</button>
+    <input id="scrub" type="range" min="0" max="1000" value="0" aria-label="Timeline">
+    <span id="clock">0.0s</span>
+    <select id="speed" aria-label="Playback speed">
+      <option value="0.5">0.5&times;</option>
+      <option value="1" selected>1&times;</option>
+      <option value="1.5">1.5&times;</option>
+    </select>
+    <span class="tip"><kbd>Space</kbd> play <kbd>1</kbd>&ndash;<kbd>6</kbd> rotation <kbd>drag</kbd> orbit</span>
+  </div>
+</div>
+
+<script type="module">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+/* =============== court model ===============
+   Court coordinates are metres. Net is at y=0, our side is y>0,
+   x runs sideline to sideline. World mapping is (x, height, y). */
+const HALF_W = 4.5, HALF_L = 9, ATTACK = 3, NET_H = 2.43, HAND_H = 3.15;
+const ZONES = ['P1','P2','P3','P4','P5','P6'];
+const BASE = {P1:[2.6,6.6], P2:[2.6,1.5], P3:[0,1.5], P4:[-2.6,1.5], P5:[-2.6,6.6], P6:[0,6.6]};
+const BACK_ROW = ['P1','P5','P6'];
+const ORDER = ['S','OH1','MB1','OPP','OH2','MB2'];      // serving order of a 5-1
+const ZMIRROR = {P1:'P5',P5:'P1',P2:'P4',P4:'P2',P3:'P3',P6:'P6'};
+
+const COL = {
+  team:0x4fb2ff, setter:0x6ef0a8, lib:0xffd166,
+  opp:0xff6274, focus:0xffffff, dim:0x1b3d5e
+};
+
+/* Rotation r (1-6) maps zone index i to a role. Rotating moves everyone
+   one slot along P2->P1->P6->P5->P4->P3->P2, which is this single shift. */
+function lineup(rot, liberoOn){
+  const lu = {}, hidden = {};
+  ZONES.forEach((z,i)=>{ lu[z] = ORDER[(i + rot - 1) % 6]; });
+  if(liberoOn){
+    for(const z of BACK_ROW){
+      if(lu[z].startsWith('MB')){ hidden[z] = lu[z]; lu[z] = 'L'; }
+    }
+  }
+  return {lu, hidden};
+}
+const isBack = z => BACK_ROW.includes(z);
+
+/* THE SWITCH. Rotational order only has to hold at the moment the server
+   contacts the ball. The instant it is struck, players move to the job they
+   actually play: middle blocker to the middle of the net, outside to the left
+   pin, and in the back row the middle blocker - or the libero covering for
+   them - to left back. Without this a back-row middle would spend the rally
+   stranded in whatever corner the rotation happened to leave them in. */
+const FRONT_SLOT = {MB:'P3', OH:'P4', OTHER:'P2'};
+const BACK_SLOT  = {MB:'P5', OH:'P6', OTHER:'P1'};
+function roleClass(r){
+  if(r === 'L' || r.startsWith('MB')) return 'MB';
+  if(r.startsWith('OH')) return 'OH';
+  return 'OTHER';                       // setter or opposite
+}
+function switchMap(lu){
+  const out = {};
+  for(const z of ['P2','P3','P4']) out[z] = FRONT_SLOT[roleClass(lu[z])];
+  for(const z of BACK_ROW)         out[z] = BACK_SLOT[roleClass(lu[z])];
+  return out;
+}
+/* re-key a slot-based setup so each rotational zone gets the slot it moves to */
+function bySlot(setup, lu){
+  const sm = switchMap(lu), out = {};
+  for(const z in sm) out[z] = setup[sm[z]];
+  return out;
+}
+function slotToZone(lu){
+  const sm = switchMap(lu), inv = {};
+  for(const z in sm) inv[sm[z]] = z;
+  return inv;
+}
+function switchedBase(lu){
+  const sm = switchMap(lu), out = {};
+  for(const z in sm) out[z] = {p:[...BASE[sm[z]]], pose:'ready'};
+  return out;
+}
+
+/* =============== bodies ===============
+   A real articulated body rather than a flat billboard. Every pose is a set
+   of joint angles, and the whole figure turns to face the ball, so a dig
+   platform points at the ball from any camera angle. Nothing here depends on
+   which way the camera happens to be looking. */
+const BONE = {upperArm:.30, forearm:.28, thigh:.46, shin:.46};
+function capsuleDown(len, r){
+  const g = new THREE.CapsuleGeometry(r, Math.max(.02, len - 2*r), 3, 10);
+  g.translate(0, -len/2, 0);            // joint at the top, bone hangs down
+  return g;
+}
+const GEO = {
+  upperArm: capsuleDown(BONE.upperArm, .066),
+  forearm:  capsuleDown(BONE.forearm,  .056),
+  thigh:    capsuleDown(BONE.thigh,    .092),
+  shin:     capsuleDown(BONE.shin,     .072),
+  torso:    new THREE.CapsuleGeometry(.145, .30, 4, 14),
+  head:     new THREE.SphereGeometry(.122, 16, 12),
+  hand:     new THREE.SphereGeometry(.066, 10, 8),
+  foot:     new THREE.BoxGeometry(.105, .06, .23)
+};
+
+/* Angle convention, with the body facing -Z:
+   a shoulder or hip at 0 hangs straight down; rotation.x swings the limb
+   forward (x = PI points it straight up); rotation.z swings it out sideways
+   toward the body's own +X. Knees and elbows use rotation.x only. */
+const POSES3 = {
+  ready:   {hipY:.91, chest:[-.24,0,0], hip:[.38,0,0], knee:-.82,
+            shL:[ .60,0,-.20], elL:.42, shR:[ .60,0, .20], elR:.42},
+  pass:    {hipY:.75, chest:[-.55,0,0], hip:[.75,0,0], knee:-1.45,
+            shL:[1.15,0, .16], elL:.12, shR:[1.15,0,-.16], elR:.12},
+  dig_low: {hipY:.61, chest:[-.70,0,0], hip:[1.00,0,0], knee:-1.85,
+            shL:[1.35,0, .14], elL:.08, shR:[1.35,0,-.14], elR:.08},
+  set:     {hipY:.93, chest:[ .10,0,0], hip:[.30,0,0], knee:-.65,
+            shL:[2.50,0,-.50], elL:1.10, shR:[2.50,0, .50], elR:1.10},
+  block:   {hipY:1.02, chest:[-.08,0,0], hip:[.05,0,0], knee:-.12,
+            shL:[3.00,0,-.10], elL:.02, shR:[3.00,0, .10], elR:.02},
+  swing:   {hipY:1.00, chest:[ .15,0,0], hip:[.35,0,0], knee:-.90,
+            shL:[2.20,0,-.35], elL:.60, shR:[2.85,0, .12], elR:.10},
+  approach:{hipY:.80, chest:[-.45,0,0], hip:[.55,0,0], knee:-1.10,
+            shL:[-.90,0,-.15], elL:.30, shR:[-.90,0, .15], elR:.30},
+  serve:   {hipY:.92, chest:[ .10,0,0], hip:[.20,0,0], knee:-.45,
+            shL:[2.90,0,-.12], elL:.10, shR:[3.40,0, .25], elR:1.40},
+  run:     {hipY:.90, chest:[-.25,0,0], hip:[.60,0,0], knee:-.90,
+            hip2:[-.50,0,0], knee2:-.30,
+            shL:[-.70,0,-.12], elL:.90, shR:[ .70,0, .12], elR:.90},
+
+  /* the attack, which is five positions and not one: plant, draw the arm
+     back, contact, then swing it through */
+  load:    {hipY:.73, chest:[-.50,0,0], hip:[.80,0,0], knee:-1.50,
+            shL:[-1.50,0,-.16], elL:.15, shR:[-1.50,0, .16], elR:.15},
+  cock:    {hipY:1.00, chest:[ .18,0,0], hip:[.45,0,0], knee:-1.15,
+            shL:[2.55,0,-.30], elL:.25, shR:[3.55,0, .22], elR:1.35},
+  follow:  {hipY:.95, chest:[-.30,0,0], hip:[.55,0,0], knee:-1.00,
+            shL:[ .30,0,-.18], elL:.30, shR:[1.10,0,-.25], elR:.35},
+  /* and the block, which starts on the floor with the hands already up */
+  blockload:{hipY:.83, chest:[-.18,0,0], hip:[.55,0,0], knee:-1.15,
+            shL:[2.10,0,-.35], elL:1.30, shR:[2.10,0, .35], elR:1.30}
+};
+/* a sideways dig is just a dig with the body turned, now that it can turn */
+POSES3.dig_side = POSES3.pass;
+
+/* Every pose carries every joint, so blending between two of them is a
+   straight numeric lerp with no missing fields to special-case. */
+const POSE_VEC = ['chest','hip','hip2','shL','shR'];
+function normPose(P){
+  return {
+    hipY:P.hipY, knee:P.knee, knee2:(P.knee2 === undefined ? P.knee : P.knee2),
+    elL:P.elL, elR:P.elR,
+    chest:[...P.chest], hip:[...P.hip], hip2:[...(P.hip2 || P.hip)],
+    shL:[...P.shL], shR:[...P.shR]
+  };
+}
+for(const k in POSES3) POSES3[k] = normPose(POSES3[k]);
+
+function lerpPose(c, P, k){
+  c.hipY  += (P.hipY  - c.hipY )*k;
+  c.knee  += (P.knee  - c.knee )*k;
+  c.knee2 += (P.knee2 - c.knee2)*k;
+  c.elL   += (P.elL   - c.elL  )*k;
+  c.elR   += (P.elR   - c.elR  )*k;
+  for(const v of POSE_VEC)
+    for(let i=0;i<3;i++) c[v][i] += (P[v][i] - c[v][i])*k;
+}
+
+/* Bodies ease between poses rather than snapping, which is what turns a list
+   of positions into a movement. On a scrub or a scenario change there is no
+   movement to show, so they snap instead of smearing across the court. */
+let poseDt = 0, poseSnap = true, lastPoseT = -99, lastResp = null;
+
+function joint(parent, x, y, z){
+  const g = new THREE.Group();
+  g.position.set(x, y, z);
+  parent.add(g);
+  return g;
+}
+function limb(parent, geo, mat, y, z){
+  const m = new THREE.Mesh(geo, mat);
+  if(y !== undefined) m.position.set(0, y, z || 0);
+  parent.add(m);
+  return m;
+}
+
+function makeFigure(){
+  const mat = new THREE.MeshStandardMaterial({
+    color:0x4fb2ff, emissive:0x4fb2ff, emissiveIntensity:.45,
+    roughness:.45, metalness:0, transparent:true, opacity:1
+  });
+  const root = new THREE.Group();
+  root.renderOrder = 5;
+
+  const hips  = joint(root, 0, .95, 0);
+  const chest = joint(hips, 0, 0, 0);
+  limb(chest, GEO.torso, mat, .27);
+  const neck = joint(chest, 0, .52, 0);
+  limb(neck, GEO.head, mat, .12);
+
+  const shL = joint(chest, -.19, .46, 0);  limb(shL, GEO.upperArm, mat);
+  const elL = joint(shL, 0, -BONE.upperArm, 0); limb(elL, GEO.forearm, mat);
+  const haL = joint(elL, 0, -BONE.forearm, 0);  limb(haL, GEO.hand, mat);
+
+  const shR = joint(chest,  .19, .46, 0);  limb(shR, GEO.upperArm, mat);
+  const elR = joint(shR, 0, -BONE.upperArm, 0); limb(elR, GEO.forearm, mat);
+  const haR = joint(elR, 0, -BONE.forearm, 0);  limb(haR, GEO.hand, mat);
+
+  const hiL = joint(hips, -.105, 0, 0); limb(hiL, GEO.thigh, mat);
+  const knL = joint(hiL, 0, -BONE.thigh, 0); limb(knL, GEO.shin, mat);
+  limb(knL, GEO.foot, mat, -BONE.shin - .03, -.05);
+
+  const hiR = joint(hips,  .105, 0, 0); limb(hiR, GEO.thigh, mat);
+  const knR = joint(hiR, 0, -BONE.thigh, 0); limb(knR, GEO.shin, mat);
+  limb(knR, GEO.foot, mat, -BONE.shin - .03, -.05);
+
+  scene.add(root);
+  return {root, mat, hips, chest, shL, elL, haL, shR, elR, haR, hiL, knL, hiR, knR, yaw:0};
+}
+
+function applyPose(f, name){
+  const P = POSES3[name] || POSES3.ready;
+  if(!f.cur || poseSnap) f.cur = normPose(P);
+  else lerpPose(f.cur, P, 1 - Math.exp(-17 * Math.min(.1, Math.max(.001, poseDt))));
+  const C = f.cur;
+  f.hips.position.y = C.hipY;
+  f.chest.rotation.set(C.chest[0], C.chest[1], C.chest[2]);
+  f.shL.rotation.set(C.shL[0], C.shL[1], C.shL[2]); f.elL.rotation.x = C.elL;
+  f.shR.rotation.set(C.shR[0], C.shR[1], C.shR[2]); f.elR.rotation.x = C.elR;
+  f.hiL.rotation.set(C.hip[0],  C.hip[1],  C.hip[2]);  f.knL.rotation.x = C.knee;
+  f.hiR.rotation.set(C.hip2[0], C.hip2[1], C.hip2[2]); f.knR.rotation.x = C.knee2;
+}
+
+/* Two keyframes say "approach" then "swing". That is not an attack: an attack
+   is a plant, a jump that starts only once the feet have loaded, the arm
+   drawn back, the contact, and the follow-through. Same for a block, which
+   begins on the floor and comes down once the ball is past it. Deriving it
+   here means every scenario gets the movement without authoring it. */
+const ease = x => 1 - (1-x)*(1-x);
+function motion(d, u, ballZ, spanSec){
+  const pa = d.pose, pb = d.poseNext;
+  let pose = pa, jump = d.jump;
+
+  if(pb === 'swing' && pa !== 'swing'){
+    pose = u < .40 ? (pa === 'ready' ? 'ready' : 'approach')
+         : u < .70 ? 'load'
+         : u < .93 ? 'cock' : 'swing';
+    const lift = u < .70 ? 0 : (u - .70)/.30;
+    jump = d.jumpA + (d.jumpB - d.jumpA)*ease(lift);
+  } else if(pa === 'swing'){
+    pose = u < .25 ? 'swing' : 'follow';
+    /* gravity, not a keyframe: a hitter is back on the floor about six tenths
+       of a second after contact, whatever the next keyframe says */
+    const fall = Math.min(1, (u * spanSec) / .62);
+    jump = d.jumpA * (1 - fall*fall);
+  } else if(pb === 'block' && pa !== 'block'){
+    pose = u < .55 ? 'blockload' : 'block';
+    const lift = u < .55 ? 0 : (u - .55)/.45;
+    jump = d.jumpA + (d.jumpB - d.jumpA)*ease(lift);
+  }
+
+  if(pose === 'block'){            // the block lands once the ball is past it
+    const f = Math.max(0, Math.min(1, (ballZ - .9)/.9));
+    jump *= f;
+    if(f < .35) pose = 'ready';
+  }
+  return {...d, pose, jump};
+}
+
+/* where this body is actually touching the ball, read off the real hand bones */
+const _h1 = new THREE.Vector3(), _h2 = new THREE.Vector3();
+function handPoint(f, pose){
+  f.haL.getWorldPosition(_h1);
+  f.haR.getWorldPosition(_h2);
+  if(pose === 'swing' || pose === 'serve') return _h2.clone();
+  return _h1.add(_h2).multiplyScalar(.5).clone();
+}
+
+/* Blockers and hitters look across the net; everybody else watches the ball. */
+function facePoint(pose, p, ball){
+  if(pose === 'block' || pose === 'blockload' || pose === 'swing' || pose === 'cock'
+     || pose === 'load' || pose === 'follow' || pose === 'serve' || pose === 'approach')
+    return [p[0], p[1] > 0 ? -6 : 6];
+  return [ball[0], ball[1]];
+}
+
+/* =============== scene =============== */
+const canvas = document.getElementById('scene');
+const renderer = new THREE.WebGLRenderer({canvas, antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x050a14);
+scene.fog = new THREE.Fog(0x050a14, 34, 74);
+const camera = new THREE.PerspectiveCamera(46, 1, .1, 200);
+
+/* the court and net stay unlit MeshBasic; these are for the bodies, so the
+   limbs separate from each other instead of reading as one glowing blob */
+scene.add(new THREE.HemisphereLight(0x9fd0ff, 0x0b1830, 1.05));
+const keyLight = new THREE.DirectionalLight(0xffffff, 1.15);
+keyLight.position.set(6, 14, 10); scene.add(keyLight);
+const fillLight = new THREE.DirectionalLight(0x6fa8ff, .55);
+fillLight.position.set(-8, 7, -7); scene.add(fillLight);
+
+const orbit = {target:new THREE.Vector3(0,0.9,1.9), r:24, theta:0.15, phi:0.82};
+function placeCamera(){
+  orbit.phi = Math.max(.22, Math.min(1.30, orbit.phi));
+  orbit.r   = Math.max(9, Math.min(42, orbit.r));
+  const sp = Math.sin(orbit.phi);
+  camera.position.set(
+    orbit.target.x + orbit.r*sp*Math.sin(orbit.theta),
+    orbit.target.y + orbit.r*Math.cos(orbit.phi),
+    orbit.target.z + orbit.r*sp*Math.cos(orbit.theta)
+  );
+  camera.lookAt(orbit.target);
+}
+function resize(){
+  const w = canvas.clientWidth || innerWidth, h = canvas.clientHeight || innerHeight;
+  renderer.setSize(w,h,false);
+  camera.aspect = w/h; camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize);
+
+/* hand-rolled orbit: drag to turn, wheel/pinch to zoom */
+let drag = null, pinch = null;
+canvas.addEventListener('pointerdown', e=>{
+  if(e.pointerType === 'touch' && pinch) return;
+  drag = {x:e.clientX, y:e.clientY, moved:0, player:pickPlayer(e)};
+  canvas.setPointerCapture(e.pointerId);
+});
+canvas.addEventListener('pointermove', e=>{
+  if(!drag){
+    canvas.style.cursor = pickPlayer(e) ? 'grab' : 'default';
+    return;
+  }
+  const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+  drag.moved += Math.abs(dx) + Math.abs(dy);
+  if(drag.player){
+    canvas.style.cursor = 'grabbing';
+    const pt = floorPointAt(e);
+    if(pt){ ui.overrides[drag.player] = pt; refreshMoved(); }
+  } else {
+    orbit.theta -= dx * .006;
+    orbit.phi   -= dy * .005;
+    placeCamera();
+  }
+  drag.x = e.clientX; drag.y = e.clientY;
+});
+canvas.addEventListener('pointerup', e=>{
+  if(drag && !drag.player && drag.moved < 5) probeAt(e);
+  canvas.style.cursor = 'default';
+  drag = null;
+});
+canvas.addEventListener('pointercancel', ()=>{ drag = null; });
+
+/* picking: sprites first so you grab a person, floor second so you can put them
+   down anywhere, including outside the lines */
+function toNdc(e){
+  const r = canvas.getBoundingClientRect();
+  ndc.x = ((e.clientX - r.left)/r.width)*2 - 1;
+  ndc.y = -((e.clientY - r.top)/r.height)*2 + 1;
+  ray.setFromCamera(ndc, camera);
+}
+function pickPlayer(e){
+  if(!dragObjs.length) return null;
+  toNdc(e);
+  for(const h of ray.intersectObjects(dragObjs, true)){
+    let o = h.object;
+    while(o && o.userData.dragKey === undefined) o = o.parent;
+    if(o && o.visible) return o.userData.dragKey;
+  }
+  return null;
+}
+function floorPointAt(e){
+  toNdc(e);
+  const h = ray.intersectObject(ground)[0] || ray.intersectObject(court)[0];
+  if(!h) return null;
+  return [Math.max(-8, Math.min(8, h.point.x)), Math.max(-13, Math.min(13, h.point.z))];
+}
+canvas.addEventListener('wheel', e=>{
+  e.preventDefault();
+  orbit.r *= Math.exp(e.deltaY * .0012);
+  placeCamera();
+}, {passive:false});
+canvas.addEventListener('touchstart', e=>{
+  if(e.touches.length === 2){
+    drag = null;
+    pinch = Math.hypot(e.touches[0].clientX-e.touches[1].clientX, e.touches[0].clientY-e.touches[1].clientY);
+  }
+}, {passive:true});
+canvas.addEventListener('touchmove', e=>{
+  if(e.touches.length === 2 && pinch){
+    const d = Math.hypot(e.touches[0].clientX-e.touches[1].clientX, e.touches[0].clientY-e.touches[1].clientY);
+    orbit.r *= pinch / d; pinch = d; placeCamera();
+  }
+}, {passive:true});
+canvas.addEventListener('touchend', ()=>{ pinch = null; }, {passive:true});
+
+/* --- court surface --- */
+function courtTexture(){
+  const W = 600, H = 1200;
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const g = c.getContext('2d');
+  const px = cx => (cx + HALF_W)/(2*HALF_W)*W;
+  const py = cy => (cy + HALF_L)/(2*HALF_L)*H;
+  g.fillStyle = '#071423'; g.fillRect(0,0,W,H);
+  g.fillStyle = 'rgba(30,74,124,.34)'; g.fillRect(0, py(0), W, py(9)-py(0));
+  g.fillStyle = 'rgba(22,56,96,.34)';  g.fillRect(0, py(-9), W, py(0)-py(-9));
+  g.fillStyle = 'rgba(79,178,255,.09)';
+  g.fillRect(0, py(0), W, py(ATTACK)-py(0));
+  g.fillRect(0, py(-ATTACK), W, py(0)-py(-ATTACK));
+  g.strokeStyle = 'rgba(168,214,255,.95)';
+  g.shadowColor = 'rgba(79,178,255,.85)'; g.shadowBlur = 11;
+  g.lineWidth = 5;
+  g.strokeRect(px(-HALF_W), py(-HALF_L), px(HALF_W)-px(-HALF_W), py(HALF_L)-py(-HALF_L));
+  g.beginPath(); g.moveTo(px(-HALF_W),py(0)); g.lineTo(px(HALF_W),py(0)); g.stroke();
+  g.setLineDash([17,13]);
+  for(const y of [ATTACK,-ATTACK]){
+    g.beginPath(); g.moveTo(px(-HALF_W),py(y)); g.lineTo(px(HALF_W),py(y)); g.stroke();
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 4;
+  return t;
+}
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(46,46),
+  new THREE.MeshBasicMaterial({color:0x040810})
+);
+ground.rotation.x = -Math.PI/2; ground.position.y = -.015; ground.renderOrder = 0; scene.add(ground);
+
+const court = new THREE.Mesh(
+  new THREE.PlaneGeometry(2*HALF_W, 2*HALF_L),
+  new THREE.MeshBasicMaterial({map:courtTexture()})
+);
+court.rotation.x = -Math.PI/2; court.renderOrder = 0; scene.add(court);
+
+/* --- net, posts, antennae --- */
+function netTexture(){
+  const W = 512, H = 64;
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const g = c.getContext('2d');
+  g.clearRect(0,0,W,H);
+  g.strokeStyle = 'rgba(190,220,250,.4)'; g.lineWidth = 1;
+  for(let x=0;x<=W;x+=12){ g.beginPath(); g.moveTo(x,0); g.lineTo(x,H); g.stroke(); }
+  for(let y=0;y<=H;y+=12){ g.beginPath(); g.moveTo(0,y); g.lineTo(W,y); g.stroke(); }
+  g.fillStyle = 'rgba(235,245,255,.92)';
+  g.fillRect(0,0,W,7); g.fillRect(0,H-5,W,5);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+const net = new THREE.Mesh(
+  new THREE.PlaneGeometry(2*HALF_W, 1),
+  new THREE.MeshBasicMaterial({map:netTexture(), transparent:true, side:THREE.DoubleSide, depthWrite:false})
+);
+net.position.set(0, NET_H - .5, 0); net.renderOrder = 4; scene.add(net);
+
+for(const sx of [-1,1]){
+  const post = new THREE.Mesh(
+    new THREE.CylinderGeometry(.055,.055,2.75,10),
+    new THREE.MeshBasicMaterial({color:0x9fc4e4})
+  );
+  post.position.set(sx*(HALF_W+.28), 1.375, 0); scene.add(post);
+
+  const ant = new THREE.Mesh(
+    new THREE.CylinderGeometry(.022,.022,.8,6),
+    new THREE.MeshBasicMaterial({color:0xff6274})
+  );
+  ant.position.set(sx*HALF_W, NET_H + .4, 0); scene.add(ant);
+}
+
+/* --- ball --- */
+/* On an equirectangular map a great circle is a sine wave, so three sine
+   bands a third of a turn apart read as the classic wrapped volleyball
+   panels once they are on a sphere. */
+function volleyTexture(){
+  const W = 512, H = 256;
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const g = c.getContext('2d');
+  g.fillStyle = '#f4f7ff'; g.fillRect(0,0,W,H);
+  const curve = (i, off)=>{
+    g.beginPath();
+    for(let x=0;x<=W;x++){
+      const t = x/W*Math.PI*2 + i*Math.PI*2/3;
+      const y = H/2 + Math.sin(t)*H*.30 + off;
+      x ? g.lineTo(x,y) : g.moveTo(x,y);
+    }
+    g.stroke();
+  };
+  const cols = ['#1f5fc0', '#ffd24a', '#eef2fb'];
+  g.lineCap = 'round';
+  for(let i=0;i<3;i++){ g.strokeStyle = cols[i]; g.lineWidth = H*.30; curve(i,0); }
+  g.strokeStyle = 'rgba(26,38,60,.55)'; g.lineWidth = 2.5;
+  for(let i=0;i<3;i++){ curve(i, -H*.15); curve(i, H*.15); }
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  return tex;
+}
+const ball = new THREE.Mesh(
+  new THREE.SphereGeometry(.115,32,24),
+  new THREE.MeshStandardMaterial({
+    map:volleyTexture(), roughness:.5, metalness:0,
+    emissive:0x28303f, emissiveIntensity:.5
+  })
+);
+ball.renderOrder = 6; scene.add(ball);
+const ballPrev = new THREE.Vector3();
+function glowTexture(){
+  const S = 128;
+  const c = document.createElement('canvas'); c.width = c.height = S;
+  const g = c.getContext('2d');
+  const gr = g.createRadialGradient(S/2,S/2,0,S/2,S/2,S/2);
+  gr.addColorStop(0,'rgba(255,255,255,1)');
+  gr.addColorStop(.3,'rgba(255,228,160,.5)');
+  gr.addColorStop(1,'rgba(255,200,90,0)');
+  g.fillStyle = gr; g.fillRect(0,0,S,S);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+const GLOW = glowTexture();
+const ballGlow = new THREE.Sprite(new THREE.SpriteMaterial({
+  map:GLOW, color:0xffd166, transparent:true, opacity:.85,
+  blending:THREE.AdditiveBlending, depthWrite:false
+}));
+ballGlow.scale.set(.6,.6,.6); ballGlow.renderOrder = 6; scene.add(ballGlow);
+
+/* --- the live floor ---
+   Rays from the attacker's contact point past the block's outer edges, down to
+   the court. Whatever the block covers goes dark; what is left is lit, and the
+   lit floor is exactly what the back row has to be standing in. */
+const openMat = new THREE.MeshBasicMaterial({
+  color:0xff8c2b, transparent:true, opacity:.34,
+  side:THREE.DoubleSide, depthWrite:false, blending:THREE.AdditiveBlending
+});
+const openMesh = new THREE.Mesh(new THREE.BufferGeometry(), openMat);
+openMesh.visible = false; openMesh.renderOrder = 1; scene.add(openMesh);
+
+const openEdge = new THREE.LineSegments(
+  new THREE.BufferGeometry(),
+  new THREE.LineBasicMaterial({color:0xffb46b, transparent:true, opacity:.85})
+);
+openEdge.visible = false; openEdge.renderOrder = 1; scene.add(openEdge);
+
+/* the corridor drawn back to the hitter's contact point, so it reads as
+   something projected out of the smash rather than paint on the floor */
+const openRays = new THREE.LineSegments(
+  new THREE.BufferGeometry(),
+  new THREE.LineBasicMaterial({color:0xff8c2b, transparent:true, opacity:.5})
+);
+openRays.visible = false; openRays.renderOrder = 5; scene.add(openRays);
+
+/* Sample depth down the court. At each depth work out the band of landing
+   spots a straight swing can still find: inside the antennae, high enough to
+   clear the net, and not passing through the blockers' hands. That leaves up
+   to two lit strips, one either side of the block. */
+function openBands(ax, ay, az, bx0, bx1){
+  const A = {l:[], r:[]}, B = {l:[], r:[]};
+  const N = 46;
+  for(let i=0;i<=N;i++){
+    const cy = .25 + (HALF_L - .25)*i/N;
+    const t = (0 - ay)/(cy - ay);
+    const zn = az*(1 - t);
+    if(zn < NET_H) continue;                       // too sharp to clear the net
+    let a1 = ax + (-HALF_W-ax)/t, a2 = ax + (HALF_W-ax)/t;
+    if(a1 > a2){ const q=a1; a1=a2; a2=q; }
+    a1 = Math.max(a1, -HALF_W); a2 = Math.min(a2, HALF_W);
+    if(a2 - a1 < .02) continue;
+    if(zn <= HAND_H){
+      let b1 = ax + (bx0-ax)/t, b2 = ax + (bx1-ax)/t;
+      if(b1 > b2){ const q=b1; b1=b2; b2=q; }
+      if(b1 > a1 + .02){ A.l.push([a1,cy]); A.r.push([Math.min(b1,a2),cy]); }
+      if(b2 < a2 - .02){ B.l.push([Math.max(b2,a1),cy]); B.r.push([a2,cy]); }
+    } else {
+      A.l.push([a1,cy]); A.r.push([a2,cy]);         // clean over the top
+    }
+  }
+  return [A,B].filter(b => b.l.length > 1);
+}
+
+let openInfoCache = null, openBaseOpacity = .34;
+function drawOpen(info, fade){
+  const f = (fade === undefined) ? 1 : fade;
+  if(!info || !ui.showOpen || f <= .02){
+    openMesh.visible = openEdge.visible = openRays.visible = false; return;
+  }
+  openMat.opacity           = openBaseOpacity * f;
+  openEdge.material.opacity = .85 * f;
+  openRays.material.opacity = .50 * f;
+  openInfoCache = info;
+  const bands = openBands(info[0], info[1], info[2], info[3], info[4]);
+  const pos = [], edge = [];
+  for(const b of bands){
+    for(let i=0;i<b.l.length-1;i++){
+      const l0=b.l[i], r0=b.r[i], l1=b.l[i+1], r1=b.r[i+1];
+      pos.push(l0[0],.02,l0[1],  r0[0],.02,r0[1],  r1[0],.02,r1[1]);
+      pos.push(l0[0],.02,l0[1],  r1[0],.02,r1[1],  l1[0],.02,l1[1]);
+      edge.push(l0[0],.035,l0[1], l1[0],.035,l1[1]);
+      edge.push(r0[0],.035,r0[1], r1[0],.035,r1[1]);
+    }
+    const e = b.l.length-1;
+    edge.push(b.l[0][0],.035,b.l[0][1], b.r[0][0],.035,b.r[0][1]);
+    edge.push(b.l[e][0],.035,b.l[e][1], b.r[e][0],.035,b.r[e][1]);
+  }
+  const rays = [info[0], info[2], info[1],  info[0], 0, info[1]];
+  for(const b of bands){
+    const e = b.l.length-1;
+    for(const q of [b.l[0], b.r[0], b.l[e], b.r[e]]){
+      rays.push(info[0], info[2], info[1],  q[0], .03, q[1]);
+    }
+  }
+  openRays.geometry.dispose();
+  const gr = new THREE.BufferGeometry();
+  gr.setAttribute('position', new THREE.Float32BufferAttribute(rays,3));
+  openRays.geometry = gr; openRays.visible = true;
+
+  if(!pos.length){ openMesh.visible = openEdge.visible = false; return; }
+  openMesh.geometry.dispose();
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos,3));
+  openMesh.geometry = g; openMesh.visible = true;
+  openEdge.geometry.dispose();
+  const ge = new THREE.BufferGeometry();
+  ge.setAttribute('position', new THREE.Float32BufferAttribute(edge,3));
+  openEdge.geometry = ge; openEdge.visible = true;
+}
+
+/* true when the block covers this spot, so only a tip or a deflection gets there */
+function behindBlock(pt, info){
+  if(!info) return false;
+  const ax=info[0], ay=info[1], az=info[2], bx0=info[3], bx1=info[4];
+  const t = (0 - ay)/(pt[1] - ay);
+  if(t <= 0) return false;
+  const zn = az*(1 - t);
+  if(zn < NET_H) return true;                      // too short for any hard swing
+  if(zn > HAND_H) return false;
+  const xn = ax + t*(pt[0] - ax);
+  return xn >= bx0 && xn <= bx1;
+}
+
+/* --- probe marker (click the floor) --- */
+const marker = new THREE.Mesh(
+  new THREE.RingGeometry(.3,.42,28),
+  new THREE.MeshBasicMaterial({color:0xffd166, transparent:true, opacity:.9, side:THREE.DoubleSide})
+);
+marker.rotation.x = -Math.PI/2; marker.position.y = .04; marker.renderOrder = 3; marker.visible = false; scene.add(marker);
+
+/* --- the focused player's share of the floor ---
+   Sweep a grid over our court and ask whoTakes() about every cell. The cells
+   that come back with this player are the balls that are theirs; everything
+   else belongs to a team-mate. */
+const areaMesh = new THREE.Mesh(
+  new THREE.BufferGeometry(),
+  new THREE.MeshBasicMaterial({color:0x4fb2ff, transparent:true, opacity:.24,
+    side:THREE.DoubleSide, depthWrite:false, blending:THREE.AdditiveBlending})
+);
+areaMesh.visible = false; areaMesh.renderOrder = 2; scene.add(areaMesh);
+
+let areaStamp = 0;
+function drawArea(s, zone, col){
+  const me = s.zones[zone];
+  if(!zone || !me || me.pose === 'block' || /block/i.test(me.tag || '')){
+    areaMesh.visible = false; return false;
+  }
+  areaMesh.material.color.setHex(col);
+  const now = performance.now();
+  if(now - areaStamp < 140 && areaMesh.visible) return true;
+  areaStamp = now;
+
+  const setup = {};
+  for(const z of ZONES){
+    const d = s.zones[z];
+    if(d) setup[z] = {p:d.p, pose:d.pose, tag:d.tag || ''};
+  }
+  const N = 44, w = 2*HALF_W/N, h = HALF_L/N, pos = [];
+  for(let i=0;i<N;i++){
+    for(let j=0;j<N;j++){
+      const cx = -HALF_W + (i+.5)*w, cy = (j+.5)*h;
+      if(whoTakes([cx,cy], setup) !== zone) continue;
+      const x0=cx-w/2, x1=cx+w/2, y0=cy-h/2, y1=cy+h/2;
+      pos.push(x0,.025,y0,  x1,.025,y0,  x1,.025,y1);
+      pos.push(x0,.025,y0,  x1,.025,y1,  x0,.025,y1);
+    }
+  }
+  areaMesh.geometry.dispose();
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos,3));
+  areaMesh.geometry = g;
+  areaMesh.visible = pos.length > 0;
+  return areaMesh.visible;
+}
+
+/* --- landing cross: where the ball is about to come down --- */
+const crossMat = new THREE.LineBasicMaterial({color:0xffe08a, transparent:true, opacity:.95});
+function crossLine(pts){
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pts,3));
+  return new THREE.Line(g, crossMat);
+}
+const landCross = new THREE.Group();
+const CR = .46;
+landCross.add(crossLine([-CR,0,-CR,  CR,0, CR]));
+landCross.add(crossLine([-CR,0, CR,  CR,0,-CR]));
+const crossRing = new THREE.Mesh(
+  new THREE.RingGeometry(.58,.66,32),
+  new THREE.MeshBasicMaterial({color:0xffe08a, transparent:true, opacity:.45, side:THREE.DoubleSide})
+);
+crossRing.rotation.x = -Math.PI/2;
+landCross.add(crossRing);
+landCross.position.y = .045;
+landCross.renderOrder = 3;
+landCross.visible = false;
+scene.add(landCross);
+
+/* --- players --- */
+function makeActor(){
+  const fig = makeFigure();
+
+  /* a soft disc on the floor, so it is obvious where the feet are */
+  const pad = new THREE.Mesh(
+    new THREE.PlaneGeometry(1.6,1.6),
+    new THREE.MeshBasicMaterial({map:GLOW, transparent:true, opacity:.3,
+      blending:THREE.AdditiveBlending, depthWrite:false})
+  );
+  pad.rotation.x = -Math.PI/2; pad.position.y = .02; pad.renderOrder = 2; scene.add(pad);
+
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(.42,.5,24),
+    new THREE.MeshBasicMaterial({transparent:true, opacity:.75, side:THREE.DoubleSide})
+  );
+  ring.rotation.x = -Math.PI/2; ring.position.y = .03; ring.renderOrder = 3;
+  ring.visible = false; scene.add(ring);
+
+  const lblMat = new THREE.SpriteMaterial({transparent:true, depthWrite:false, depthTest:false});
+  const lbl = new THREE.Sprite(lblMat);
+  lbl.scale.set(1.5,.42,1); lbl.renderOrder = 7; scene.add(lbl);
+
+  const trailMat = new THREE.LineBasicMaterial({transparent:true, opacity:.5});
+  const trail = new THREE.Line(new THREE.BufferGeometry(), trailMat);
+  trail.renderOrder = 2; scene.add(trail);
+
+  return {fig, pad, ring, label:lbl, trail, history:[], last:null};
+}
+function labelTexture(text, hex){
+  const W = 192, H = 54;
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const g = c.getContext('2d');
+  g.font = '600 30px "IBM Plex Mono", monospace';
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillStyle = 'rgba(5,10,20,.72)';
+  const w = g.measureText(text).width + 22;
+  g.beginPath(); g.roundRect((W-w)/2, 6, w, H-12, 8); g.fill();
+  g.fillStyle = hex;
+  g.fillText(text, W/2, H/2);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+const actors = {};
+ZONES.forEach(z => actors[z] = makeActor());
+const OPP_IDS = ['OA','OS','OX'];
+const oppActors = {};
+OPP_IDS.forEach(id => oppActors[id] = makeActor());
+
+const dragTargets = [];
+for(const z of ZONES)    dragTargets.push({obj:actors[z].fig.root, key:z});
+for(const id of OPP_IDS) dragTargets.push({obj:oppActors[id].fig.root, key:id});
+for(const t of dragTargets) t.obj.userData.dragKey = t.key;
+const dragObjs = dragTargets.map(t => t.obj);
+
+/* =============== defensive systems =============== */
+function defRight(system){
+  const rot = system === 'rotational';
+  return {
+    P2:{p:[2.75,.5], pose:'block', jump:.62, tag:'Block',
+        note:'Ball-side blocker. Set the block just inside the hitter so the angle is taken away and the line stays in front of your line defender.'},
+    P3:{p:[1.85,.5], pose:'block', jump:.56, tag:'Block',
+        note:'Close to the outside blocker. A seam between two pairs of hands is the easiest ball on the court to hit.'},
+    P4:{p:[-2.1,3.2], pose:'ready', tag:'Off-blocker',
+        note:'Off-blocker. Drop off the net to about the 3 m line. Cross-court tips and the sharp angle around the inside hand are yours.'},
+    P1: rot
+      ? {p:[3.5,6.4], pose:'ready', tag:'Line / deep right',
+         note:'Line, but deeper. With the middle up in front of you, the deep right corner is also yours.'}
+      : {p:[3.45,5.0], pose:'ready', tag:'Line',
+         note:'Line digger. Stay in the lit floor \u2014 the line is the one corridor the block deliberately left open.'},
+    P6: rot
+      ? {p:[1.9,3.7], pose:'ready', tag:'Middle up',
+         note:'Step up behind the block, just short of where the lit floor starts. A hard swing physically cannot land here, so everything you touch is a tip, a roll shot, or a ball deflecting off your blockers\u2019 hands. This is how the middle back helps the block.'}
+      : {p:[.3,8.0], pose:'ready', tag:'Deep middle',
+         note:'Stay deep. You cover the swing that carries long and any ball that rebounds high off the block.'},
+    P5: rot
+      ? {p:[-1.6,7.4], pose:'ready', tag:'Deep',
+         note:'Slide toward the middle. With the middle back pulled up, the whole deep half is yours.'}
+      : {p:[-3.0,7.0], pose:'ready', tag:'Deep cross',
+         note:'Deep cross-court. The block covers most of this, so read the hitter\u2019s shoulder \u2014 your ball is the one that beats or clips the block.'}
+  };
+}
+function mirrorSetup(S){
+  const out = {};
+  for(const z in S) out[ZMIRROR[z]] = {...S[z], p:[-S[z].p[0], S[z].p[1]]};
+  return out;
+}
+function defMiddle(system){
+  const rot = system === 'rotational';
+  return {
+    P3:{p:[0,.5], pose:'block', jump:.62, tag:'Block',
+        note:'The quick is on you alone most of the time. Jump with the hitter, not with the set.'},
+    P2:{p:[.9,.5], pose:'block', jump:.5, tag:'Block',
+        note:'Help inside if you can get there. Against a fast middle you often cannot \u2014 then get your hands over and take the angle.'},
+    P4:{p:[-1.9,2.9], pose:'ready', tag:'Off-blocker',
+        note:'Off the net. A blocked or deflected quick drops fast and short \u2014 you are the one close enough to get it.'},
+    P1:{p:[3.0,6.0], pose:'ready', tag:'Right back',
+        note:'Short approach angle means a flat ball. Start lower than you would against an outside set.'},
+    P5:{p:[-3.0,6.0], pose:'ready', tag:'Left back',
+        note:'Short approach angle means a flat ball. Start lower than you would against an outside set.'},
+    P6: rot
+      ? {p:[0,4.3], pose:'ready', tag:'Middle up',
+         note:'Pulled up behind the middle blocker. Against a quick, the tip and the deflection are the two balls that actually fall \u2014 both land in front of you.'}
+      : {p:[0,8.0], pose:'ready', tag:'Deep middle',
+         note:'Deep behind the block. The middle attack that beats a single blocker is usually hit hard and deep.'}
+  };
+}
+
+/* Who is closest, weighted by what each position is actually there for. */
+function whoTakes(pt, setup){
+  let best = null, score = 1e9;
+  for(const z in setup){
+    const s = setup[z];
+    const d = Math.hypot(pt[0]-s.p[0], pt[1]-s.p[1]);
+    let w = 1;
+    if(s.pose === 'block' || /block/i.test(s.tag || '')) w = 50;  // in the air
+    if(/Off-blocker|Middle up/.test(s.tag) && pt[1] < 4.8) w = .74;
+    if(/Deep/.test(s.tag) && pt[1] > 6.2) w = .84;
+    if(/hitter/i.test(s.tag || '')) w = 3.4;      // busy jumping
+    if(/^Setter/.test(s.tag || '')) w = 1.35;     // only if nobody better
+    const v = d*w;
+    if(v < score){ score = v; best = z; }
+  }
+  return best;
+}
+
+/* =============== scenarios =============== */
+const blend = (a,b,k)=>{
+  const out = {};
+  for(const z in b){
+    const pa = (a[z]||b[z]).p, pb = b[z].p;
+    out[z] = {...b[z], p:[pa[0]+(pb[0]-pa[0])*k, pa[1]+(pb[1]-pa[1])*k], pose:'ready', jump:0};
+  }
+  return out;
+};
+const baseZones = ()=>{
+  const o = {};
+  for(const z of ZONES) o[z] = {p:[...BASE[z]], pose:'ready'};
+  return o;
+};
+
+/* Nobody may make two contacts in a row, so if the setter dug the ball they
+   cannot also set it. The right side takes over, which is what teams actually
+   rehearse: the setter ends up digging far more often than people expect. */
+function setterAfter(ctx, respZone){
+  const nominal = ZONES.find(z => ctx.lu[z] === 'S');
+  if(respZone !== nominal) return {zone:nominal, emergency:false};
+  const inv = slotToZone(ctx.lu);
+  const alt = [inv.P2, inv.P1, inv.P4, inv.P6, inv.P3, inv.P5].find(z => z && z !== respZone);
+  return {zone:alt || nominal, emergency:true};
+}
+const SET_NOTE = 'Setter releases to the target as soon as the dig is up.';
+const EMERGENCY_NOTE = 'The setter dug this ball, so they are not allowed to touch it again - that would be a double contact. The right side steps in and sets instead.';
+
+function scDefense(ctx, side, kind){
+  const sx = side === 'right' ? 1 : -1;
+  const slot = side === 'right' ? defRight(ctx.system) : mirrorSetup(defRight(ctx.system));
+  const S = bySlot(slot, ctx.lu);
+  const inv = slotToZone(ctx.lu);
+  const blockers = (side === 'right' ? ['P2','P3'] : ['P4','P3']).map(sl => inv[sl]);
+  const A = [3.15*sx, -.45, 3.25];
+  const info = {blockers, att:'OA', az:A[2]};
+  const land = kind === 'tip' ? [1.95*sx, 2.95] : [3.6*sx, 5.25];
+  /* predicted only so the double-contact rule can be decided up front; the
+     live digger is worked out from real positions while the clip plays */
+  const setr = setterAfter(ctx, whoTakes(land, S));
+
+  const steps = [
+    {t:0, phase:'Base \u2014 read the setter',
+     coach:'Opponent is about to set. Blockers are at the net with eyes on the setter, back row is inside the court and stopped. Nobody commits until the ball leaves the setter\u2019s hands.',
+     zones:switchedBase(ctx.lu),
+     opp:{OS:{p:[-.7*sx,-1.9], pose:'set'}, OA:{p:[3.5*sx,-4.4], pose:'ready'}},
+     ball:[-.7*sx,-1.9,2.35]},
+
+    {t:1.2, phase:'Set is out \u2014 move',
+     coach:'The set is going outside. Blockers travel and the back row builds its shape around where the block will be, not around where the ball is now.',
+     zones:blend(switchedBase(ctx.lu), S, .6),
+     opp:{OS:{p:[-.7*sx,-1.9], pose:'ready'}, OA:{p:[3.4*sx,-2.7], pose:'approach'}},
+     ball:[A[0],A[1],A[2]], arc:1.1},
+
+    {t:2.1, phase:'Block up \u2014 what is open',
+     coach:'Block is up and closed. The lit floor is every spot a hard swing can still reach, and covering it is the back row\u2019s job. Everything dark is behind the blockers\u2019 hands, where only tips and deflections land.',
+     zones:S, shadow:info,
+     opp:{OA:{p:[A[0],A[1]], pose:'swing', jump:.82}},
+     ball:[A[0],A[1],A[2]]},
+
+    {t:3.1, phase:kind === 'tip' ? 'Tip over the block' : 'Hard swing, line',
+     coach:kind === 'tip'
+       ? 'The hitter sees the block and tips it short behind them. The floor here is dark, so no hard swing can reach it. That is exactly why the tip works.'
+       : 'The hitter goes line \u2014 the only corridor the block left open. Notice it lands in the lit strip, which is exactly where the line digger is standing.',
+     zones:S, shadow:info, resp:true,
+     opp:{OA:{p:[A[0],A[1]], pose:'swing', jump:.45}},
+     ball:[land[0],land[1],.75]},
+
+    {t:3.9, phase:'Dig',
+     coach:kind === 'tip'
+       ? (ctx.system === 'rotational'
+          ? 'The middle back was already standing here. Nothing heroic was needed \u2014 the position did the work.'
+          : 'In perimeter the middle back is 4 m too deep and the off-blocker is on the wrong side of the court. This ball drops. That is the trade perimeter makes: strong against the hard swing, soft against the tip.')
+       : 'The line digger plays it because they were the one defender standing in the lit strip.',
+     zones:S, shadow:info, resp:true,
+     opp:{OA:{p:[A[0],A[1]], pose:'ready'}},
+     ball:[land[0],land[1],.42]},
+
+    {t:5.2, phase:'Transition',
+     coach:setr.emergency
+       ? 'The setter dug it, so the setter cannot set it. The right side takes the second ball instead and the setter becomes an attacker. Teams that have not rehearsed this lose the rally right here.'
+       : 'Blockers land and pull off the net to start their approach. The setter is already moving to the target. Defence only counts if it turns into an attack.',
+     zones:(()=>{
+       const o = blend(S, switchedBase(ctx.lu), .8);
+       o[setr.zone] = {p:[.7,1.9], pose:'set',
+         tag:setr.emergency ? 'Emergency setter' : 'Setter',
+         note:setr.emergency ? EMERGENCY_NOTE : SET_NOTE};
+       return o;
+     })(),
+     opp:{OA:{p:[A[0],-2.4], pose:'ready'}},
+     ballAt:setr.zone, ball:[.7,1.9,2.5], arc:1.9}
+  ];
+  return steps;
+}
+
+function scReceive(ctx){
+  const lu = ctx.lu;
+  const recvSwitch = switchMap(lu);
+  const setterZone = ZONES.find(z => lu[z] === 'S');
+  const passerZones = ZONES.filter(z =>
+    lu[z] === 'OH1' || lu[z] === 'OH2' || lu[z] === 'L' ||
+    (!ctx.libero && lu[z].startsWith('MB') && isBack(z))
+  );
+  /* The libero (or the middle covering for them) owns the left lane and the
+     biggest share of the court. The other two fill middle and right. */
+  const LANE = {left:[-2.9,5.7], mid:[0,6.5], right:[2.9,5.7]};
+  const liberoZone = passerZones.find(z => lu[z] === 'L' || lu[z].startsWith('MB'));
+  const others = passerZones.filter(z => z !== liberoZone)
+    .sort((a,b) => BASE[recvSwitch[a]][0] - BASE[recvSwitch[b]][0]);
+  const lane = {};
+  if(liberoZone) lane[liberoZone] = LANE.left;
+  [LANE.mid, LANE.right].forEach((sl,i) => { if(others[i]) lane[others[i]] = sl; });
+  passerZones.forEach(z => { if(!lane[z]) lane[z] = LANE.mid; });
+
+  const recv = {};
+  for(const z of ZONES){
+    if(lane[z]){
+      const isLib = z === liberoZone;
+      recv[z] = {p:[...lane[z]], pose:'ready', tag:isLib ? 'Passer - left lane' : 'Passer',
+        note:isLib
+          ? 'Left lane is yours. You take the biggest share of the court, and after the pass you stay here: left back is where you live for the rest of the rally.'
+          : 'One of three passers. Call the ball early and take everything you can reach \u2014 a seam is only a seam if both of you wait.'};
+    } else if(z === setterZone){
+      recv[z] = isBack(z)
+        ? {p:[3.1,7.2], pose:'ready', tag:'Setter (back row)',
+           note:'Hide at the right back corner, then release to the target the instant the server contacts the ball.'}
+        : {p:[1.4,1.4], pose:'ready', tag:'Setter (front row)',
+           note:'Start at the net right of the middle and open to the passer.'};
+    } else {
+      recv[z] = {p:[BASE[recvSwitch[z]][0]*.92, 1.4], pose:'ready', tag:'Hitter',
+        note:'Not a passer. Get off the net early so you have room for a full approach.'};
+    }
+  }
+  const target = [-1.35,5.5];
+  const liberoLine = ctx.libero
+    ? 'The libero is one of the three passers, so your weakest passer is off the court entirely.'
+    : 'With the libero off, the back-row middle has to pass. They are a blocker by trade and this is the ball they least want. This is the single clearest argument for the libero.';
+
+  const released = (()=>{
+    const o = {};
+    for(const z in recv) o[z] = {...recv[z]};
+    o[setterZone] = {...o[setterZone], p:[.7,1.9], pose:'ready'};
+    return o;
+  })();
+
+  /* After the pass the rotational shape is irrelevant: everyone goes to their
+     real position. This is the movement the rotation diagrams never show. */
+  const PIN = {P4:[-4.1,3.2], P3:[-.6,2.8], P2:[3.9,3.0]};
+  const afterPass = (phase)=>{
+    const sb = switchedBase(lu);
+    const o = {};
+    for(const z of ZONES){
+      const sl = recvSwitch[z];
+      if(z === setterZone){
+        o[z] = {...released[z], p:[.7,1.9], pose:'set', tag:'Setter', note:SET_NOTE};
+      } else if(PIN[sl]){
+        const hitting = phase === 'swing' && sl === 'P4';
+        o[z] = {...released[z],
+          p:hitting ? [-3.3,1.0] : [...PIN[sl]],
+          pose:hitting ? 'swing' : 'approach',
+          jump:hitting ? .8 : 0,
+          tag:sl === 'P3' ? 'Middle - to the middle' : sl === 'P4' ? 'Outside - to the pin' : 'Right pin',
+          note:sl === 'P3'
+            ? 'You block and hit from the middle of the net every rotation, whichever corner the serve found you in.'
+            : 'Off the net, then wide. Finish outside the antenna so you can see the whole block.'};
+      } else {
+        o[z] = {...released[z], p:[...sb[z].p], pose:'ready',
+          tag:sl === 'P5' ? 'Left back' : sl === 'P6' ? 'Middle back' : 'Right back',
+          note:sl === 'P5'
+            ? 'Left back. If you are the libero or the middle covering for them, this is your home for the rest of the rally.'
+            : 'Back row base. From here you are covering the attack, then defending the counter.'};
+      }
+    }
+    return o;
+  };
+
+  return [
+    {t:0, phase:'Serve receive \u2014 set',
+     coach:'Three passers across the court, two hitters off the net, setter ready to release. ' + liberoLine,
+     zones:recv,
+     opp:{OS:{p:[2.2,-10.4], pose:'serve'}},
+     ball:[2.2,-10.2,2.4]},
+
+    {t:1.5, phase:'Ball in the air',
+     coach:'The serve is heading for the seam between two passers. Whoever can play it with their platform square to the target takes it \u2014 the other one backs them up instead of reaching across.',
+     zones:released, resp:true,
+     opp:{OS:{p:[2.2,-9.4], pose:'ready'}},
+     ball:[target[0],target[1],.9], arc:2.6},
+
+    {t:2.3, phase:'Pass',
+     coach:'Platform angled at the target, not at the ball. The pass wants to land about a metre off the net, just right of the middle.',
+     zones:released, resp:true,
+     opp:{OS:{p:[2.2,-9.0], pose:'ready'}},
+     ball:[target[0],target[1],.55]},
+
+    {t:3.6, phase:'The switch',
+     coach:'The pass is away, and now everybody moves. Rotational order only mattered until the server struck the ball - from here each player goes to the job they actually play. Watch the middle: whichever corner the rotation left them in, they go to the middle of the net if they are front row, or to left back if they are not.',
+     zones:afterPass('approach'),
+     opp:{OS:{p:[2.2,-8.6], pose:'ready'}},
+     ballAt:setterZone, ball:[.7,1.9,2.55], arc:1.7},
+
+    {t:4.8, phase:'Set to the pin',
+     coach:'Everyone is where they belong: middle in the middle, outside at the left pin, libero at left back. That shape is the same every rotation, which is the whole point of switching.',
+     zones:afterPass('swing'),
+     opp:{OS:{p:[2.2,-8.6], pose:'ready'}},
+     ballAt:slotToZone(lu).P4, ball:[-3.3,1.0,3.1], arc:1.0}
+  ];
+}
+
+function scCoverage(ctx){
+  const H = [-3.2,1.0];
+  const setterZone = ZONES.find(z => ctx.lu[z] === 'S');
+  const hitZone = slotToZone(ctx.lu).P4;
+  const CLOSE = 'Close cup. Low, inside 2 m of your hitter, hands below your knees \u2014 the blocked ball comes back fast and flat.';
+  const DEEP = 'Deep cup. Stand where a ball that beats the close cup will carry to, around 4\u20135 m behind the hitter.';
+  const build = (poseFor)=> bySlot({
+    P4:{p:[...H], pose:poseFor, tag:'Hitter', note:'Swing high and use the block if the set is tight.'},
+    P3:{p:[-1.6,2.25], pose:'ready', tag:'Close cup', note:CLOSE},
+    P2:{p:[-1.0,1.85], pose:'ready', tag:'Close cup', note:CLOSE},
+    P5:{p:[-2.9,3.7], pose:'ready', tag:'Deep cup', note:DEEP},
+    P6:{p:[-.6,4.9], pose:'ready', tag:'Deep cup', note:DEEP},
+    P1:{p:[1.5,5.7], pose:'ready', tag:'Deep cup', note:DEEP}
+  }, ctx.lu);
+  const landed = [-2.5,2.6];
+
+  return [
+    {t:0, phase:'Our attack \u2014 cup forms',
+     coach:'The moment your hitter leaves the ground, everyone else stops attacking and starts covering. The cup is tight: most balls that come off the block land within 3 m of the attacker.',
+     zones:build('approach'),
+     opp:{OA:{p:[-3.0,-.6], pose:'block', jump:.6}, OX:{p:[-1.5,-.6], pose:'block', jump:.55}},
+     ball:[-3.2,1.0,3.0]},
+
+    {t:1.0, phase:'Swing',
+     coach:'Two blockers up on the other side. Low and still \u2014 if you are moving when the ball comes off the block, you will not get it.',
+     zones:build('swing'),
+     opp:{OA:{p:[-3.0,-.6], pose:'block', jump:.68}, OX:{p:[-1.5,-.6], pose:'block', jump:.6}},
+     ball:[-3.1,.75,3.05]},
+
+    {t:1.9, phase:'Ball comes back',
+     coach:'Blocked. The ball drops almost straight down just behind the attack line.',
+     zones:build('swing'), resp:true,
+     opp:{OA:{p:[-3.0,-.6], pose:'ready'}, OX:{p:[-1.5,-.6], pose:'ready'}},
+     ball:[landed[0],landed[1],1.3]},
+
+    {t:2.7, phase:'Cover dig',
+     coach:'Close cup plays it. Hands low, no swing at it \u2014 just keep it alive and high enough to run another attack.',
+     zones:build('ready'), resp:true,
+     opp:{OA:{p:[-3.0,-1.2], pose:'ready'}, OX:{p:[-1.5,-1.2], pose:'ready'}},
+     ball:[landed[0],landed[1],.5]}
+  ];
+}
+
+function scFreeBall(ctx){
+  const setterZone = ZONES.find(z => ctx.lu[z] === 'S');
+  const S = bySlot(defRight(ctx.system), ctx.lu);
+  const free = bySlot({
+    P2:{p:[2.4,3.1], pose:'ready', tag:'Off the net', note:'Free ball means get off the net immediately. You are a hitter again, not a blocker.'},
+    P3:{p:[0,3.2], pose:'ready', tag:'Off the net', note:'Back off to the 3 m line and open up. A middle who stays at the net is out of the next attack.'},
+    P4:{p:[-2.4,3.1], pose:'ready', tag:'Off the net', note:'Off the net and wide, ready to approach from outside the sideline.'},
+    P1:{p:[3.0,6.4], pose:'ready', tag:'Right back', note:'Split the court into thirds with the other two back-row players.'},
+    P6:{p:[0,7.0], pose:'ready', tag:'Middle back', note:'You have the deepest third. A free ball that drifts long is yours.'},
+    P5:{p:[-3.0,6.4], pose:'ready', tag:'Left back', note:'Split the court into thirds with the other two back-row players.'}
+  }, ctx.lu);
+  const land = [-1.2,5.3];
+  const setr = setterAfter(ctx, whoTakes(land, free));
+  const released = (()=>{
+    const o = {};
+    for(const z in free) o[z] = {...free[z]};
+    o[setr.zone] = {...o[setr.zone], p:[.7,1.9], pose:'ready',
+      tag:setr.emergency ? 'Emergency setter' : 'Setter',
+      note:setr.emergency ? EMERGENCY_NOTE : 'Free ball is the easiest set you will get all rally. Be at the target early and run your best option.'};
+    return o;
+  })();
+
+  return [
+    {t:0, phase:'Free ball called',
+     coach:'The opponent is sending it over with no attack. The whole team transitions at once: front row off the net, back row into thirds, setter to the target.',
+     zones:(()=>{
+       const o = {};
+       for(const z in S) o[z] = {p:[...S[z].p], pose:'ready', jump:0, tag:S[z].tag, note:S[z].note};
+       return o;
+     })(),
+     opp:{OA:{p:[1.0,-3.2], pose:'pass'}},
+     ball:[1.0,-3.2,1.6]},
+
+    {t:1.4, phase:'Transition',
+     coach:'Everyone moves on the call, not on the ball. The three back-row players split the court into equal thirds so nobody has to cover a seam under pressure.',
+     zones:released, resp:true,
+     opp:{OA:{p:[1.0,-3.6], pose:'ready'}},
+     ball:[land[0],land[1],1.0], arc:2.2},
+
+    {t:2.4, phase:'Pass',
+     coach:'Play it like a serve receive: square up, platform to the target, and let the setter do the rest.',
+     zones:released, resp:true,
+     opp:{OA:{p:[1.0,-3.6], pose:'ready'}},
+     ball:[land[0],land[1],.6]},
+
+    {t:3.5, phase:'Run the offence',
+     coach:'A free ball should produce your best attack of the rally. If it does not, the transition was too slow.',
+     zones:(()=>{
+       const o = {};
+       for(const z in released) o[z] = {...released[z]};
+       o[setr.zone] = {...o[setr.zone], pose:'set'};
+       for(const z of ZONES) if(o[z].tag === 'Off the net') o[z] = {...o[z], pose:'approach'};
+       return o;
+     })(),
+     opp:{OA:{p:[1.0,-3.6], pose:'ready'}},
+     ballAt:setr.zone, ball:[.7,1.9,2.55], arc:1.7}
+  ];
+}
+
+
+/* Defence to offence. The footwork follows the standard coaching sequence:
+   land on two feet, get off the net BEFORE getting wide, and turn and run
+   rather than back-pedal, which is slow and leaves a hitter too close to the
+   net to swing properly. The left side is the busiest path on the court:
+   outside hitters take well over half of all transition attempts. */
+function scTransition(ctx){
+  const lu = ctx.lu;
+  const inv = slotToZone(lu);
+  const setterZone = ZONES.find(z => lu[z] === 'S');
+  const setterFront = ['P2','P3','P4'].includes(setterZone);
+  const K = o => bySlot(o, lu);
+  const rightPin  = setterFront ? [.8,1.8] : [4.2,3.4];
+  const rightBack = setterFront ? [3.4,5.4] : [.8,1.8];
+
+  const N = {
+    out:'Off the net first, then wide. Turn and run instead of back-pedalling, and finish outside the antenna where you can see the whole court and the whole block.',
+    mid:'Land on two feet, then drop step, crossover, hop to clear the net. Run the quick even when you know you will not get the ball: a middle who stands still lets their blockers ignore you.',
+    pin:'Right pin transition, same order: off the net, then wide.',
+    set:'Release to the target the moment you see the dig is playable. About a metre off the net, just right of the middle.',
+    dig:'You dug it. Get your feet back under you, because in half a second you are part of the cup.',
+    back:'Stay in. The moment the set goes up you are covering, not watching.'
+  };
+
+  return [
+    {t:0, phase:'The dig is up',
+     coach:'The dig is up, and from this instant every player changes job. The three at the net stop being blockers and become hitters. The back row stops digging and starts thinking about covering.',
+     zones:K({
+       P4:{p:[-2.3,3.1], pose:'ready', tag:'Off-blocker', note:'You pulled off the net to defend. The second the ball is up you are a hitter again.'},
+       P3:{p:[-.2,.55], pose:'ready', tag:'Blocker', note:'Land on two feet. Reaching across and landing on one foot is how knees get hurt.'},
+       P2:{p:[2.7,.55], pose:'ready', tag:'Blocker', note:N.pin},
+       P5:{p:[-3.0,6.6], pose:'dig_low', tag:'Digger', note:N.dig},
+       P6:{p:[.2,7.4], pose:'ready', tag:'Middle back', note:N.back},
+       P1:{p:[3.1,6.2], pose:'ready', tag:'Right back', note:N.back}
+     }),
+     resp:true,
+     opp:{OA:{p:[2.6,-1.1], pose:'ready'}, OX:{p:[-1.0,-1.1], pose:'ready'}},
+     ball:[-3.0,6.3,.8]},
+
+    {t:1.3, phase:'Off the net, then wide',
+     coach:'Everybody runs at once. The outside goes out past the antenna, the middle clears the net and opens up for a quick, and the setter is already at the target. Getting off the net comes before getting wide, because a hitter who drifts sideways along the net has nowhere left to approach from.',
+     zones:K({
+       P4:{p:[-4.7,3.9], pose:'run', tag:'Outside, go wide', note:N.out},
+       P3:{p:[-.4,2.9], pose:'run', tag:'Middle, be available', note:N.mid},
+       P2:{p:rightPin, pose:setterFront ? 'ready' : 'run', tag:setterFront ? 'Setter' : 'Right pin', note:setterFront ? N.set : N.pin},
+       P5:{p:[-2.8,6.2], pose:'ready', tag:'Digger', note:N.dig},
+       P6:{p:[.2,6.6], pose:'ready', tag:'Middle back', note:N.back},
+       P1:{p:rightBack, pose:'ready', tag:setterFront ? 'Back-row option' : 'Setter', note:setterFront ? 'The setter is front row, so you are the back-row attack option. Stay behind the 3 m line.' : N.set}
+     }),
+     opp:{OA:{p:[-2.4,-1.4], pose:'run'}, OX:{p:[-.6,-1.2], pose:'run'}},
+     ballAt:setterZone, ball:[.8,1.9,2.7], arc:1.3},
+
+    {t:2.4, phase:'Setter at the target',
+     coach:'Three attackers are live and the other team has to respect all of them. That is the whole point of transition: if only one hitter gets there, their blockers only have one problem to solve.',
+     zones:K({
+       P4:{p:[-4.3,2.7], pose:'approach', tag:'Outside', note:N.out},
+       P3:{p:[-.9,2.1], pose:'approach', tag:'Middle', note:N.mid},
+       P2:{p:setterFront ? [.8,1.8] : [3.9,2.6], pose:setterFront ? 'set' : 'approach', tag:setterFront ? 'Setter' : 'Right pin', note:setterFront ? N.set : N.pin},
+       P5:{p:[-2.7,5.4], pose:'ready', tag:'Cover soon', note:N.back},
+       P6:{p:[.2,6.0], pose:'ready', tag:'Cover soon', note:N.back},
+       P1:{p:setterFront ? [3.4,5.4] : [.8,1.8], pose:setterFront ? 'ready' : 'set', tag:setterFront ? 'Back-row option' : 'Setter', note:setterFront ? N.back : N.set}
+     }),
+     opp:{OA:{p:[-2.9,-.6], pose:'ready'}, OX:{p:[-1.3,-.6], pose:'ready'}},
+     ballAt:setterZone, ball:[.8,1.9,2.6]},
+
+    {t:3.2, phase:'Set to the left pin',
+     coach:'The set goes outside. Your approach angle decides your shot before you ever touch the ball: come in sharp and you will hit sharp cross-court, come in square and the line opens up.',
+     zones:K({
+       P4:{p:[-3.9,1.7], pose:'approach', tag:'Outside', note:'Approach angle is shot selection. Sharp in, sharp cross-court.'},
+       P3:{p:[-1.5,2.0], pose:'ready', tag:'Close cup', note:'The quick is not coming. Turn and cover.'},
+       P2:{p:setterFront ? [-1.0,1.8] : [3.4,2.2], pose:'ready', tag:setterFront ? 'Close cup' : 'Right pin', note:setterFront ? 'Get low inside your hitter.' : N.pin},
+       P5:{p:[-2.9,4.2], pose:'ready', tag:'Deep cup', note:N.back},
+       P6:{p:[-.5,5.2], pose:'ready', tag:'Deep cup', note:N.back},
+       P1:{p:setterFront ? [2.4,5.0] : [-.8,2.6], pose:'ready', tag:'Cup', note:N.back}
+     }),
+     opp:{OA:{p:[-3.0,-.6], pose:'ready'}, OX:{p:[-1.6,-.6], pose:'ready'}},
+     ballAt:inv.P4, ball:[-3.3,.95,3.2], arc:.9},
+
+    {t:4.0, phase:'Swing and cover',
+     coach:'Everyone who is not hitting is covering. The cup is tight because a blocked ball comes straight back down and lands within about three metres of the attacker.',
+     zones:K({
+       P4:{p:[-3.3,.95], pose:'swing', jump:.82, tag:'Hitter', note:'Swing high, and use their hands if the set is tight.'},
+       P3:{p:[-1.6,2.2], pose:'ready', tag:'Close cup', note:'Low, hands below your knees, still. If you are moving you will not get it.'},
+       P2:{p:setterFront ? [-1.1,1.7] : [2.6,2.4], pose:'ready', tag:setterFront ? 'Close cup' : 'Cup', note:'Low and inside the hitter.'},
+       P5:{p:[-2.9,3.4], pose:'ready', tag:'Deep cup', note:'Stand where a ball that beats the close cup will carry to.'},
+       P6:{p:[-.6,4.6], pose:'ready', tag:'Deep cup', note:'Stand where a ball that beats the close cup will carry to.'},
+       P1:{p:[1.4,5.6], pose:'ready', tag:'Cup', note:N.back}
+     }),
+     opp:{OA:{p:[-3.0,-.6], pose:'block', jump:.62}, OX:{p:[-1.6,-.6], pose:'block', jump:.56}},
+     ballAt:inv.P4, ball:[-3.3,.95,3.2]},
+
+    {t:4.9, phase:'Through the block',
+     coach:'Transition done. A dig that turns into a real attack is the difference between surviving a rally and winning it, which is why the run off the net matters as much as the swing.',
+     zones:K({
+       P4:{p:[-3.3,1.4], pose:'ready', tag:'Hitter', note:'Land, then straight back off the net. The rally is not over.'},
+       P3:{p:[-1.6,2.2], pose:'ready', tag:'Close cup', note:'Hold the cup until the ball is on their floor.'},
+       P2:{p:setterFront ? [-1.1,1.7] : [2.6,2.4], pose:'ready', tag:'Cup', note:'Hold the cup.'},
+       P5:{p:[-2.9,3.4], pose:'ready', tag:'Deep cup', note:'Hold the cup.'},
+       P6:{p:[-.6,4.6], pose:'ready', tag:'Deep cup', note:'Hold the cup.'},
+       P1:{p:[1.4,5.6], pose:'ready', tag:'Cup', note:'Hold the cup.'}
+     }),
+     opp:{OA:{p:[-3.0,-.6], pose:'ready'}, OX:{p:[-1.6,-.6], pose:'ready'}},
+     ball:[2.3,-5.4,.6], arc:1.1}
+  ];
+}
+
+const SCENARIOS = [
+  {id:'recv',  name:'Serve receive',           sub:'Three passers, seam responsibility', build:ctx => scReceive(ctx)},
+  {id:'right', name:'Attack on our right',     sub:'Outside hit, block and dig',         build:ctx => scDefense(ctx,'right','hard')},
+  {id:'left',  name:'Attack on our left',      sub:'Mirror image of the right side',     build:ctx => scDefense(ctx,'left','hard')},
+  {id:'tip',   name:'Tip over the block',      sub:'Where perimeter breaks down',        build:ctx => scDefense(ctx,'right','tip')},
+  {id:'mid',   name:'Opponent middle quick',   sub:'Fast ball, single blocker',          build:ctx => scMiddle(ctx)},
+  {id:'cover', name:'Cover our own hitter',    sub:'The cup around the attacker',        build:ctx => scCoverage(ctx)},
+  {id:'free',  name:'Free ball transition',    sub:'Off the net, into thirds',           build:ctx => scFreeBall(ctx)},
+  {id:'trans', name:'Defence to offence',      sub:'Dig, run off the net, attack',       build:ctx => scTransition(ctx)}
+];
+
+function scMiddle(ctx){
+  const S = bySlot(defMiddle(ctx.system), ctx.lu);
+  const inv = slotToZone(ctx.lu);
+  const A = [.2,-.45,3.2];
+  const info = {blockers:['P3','P2'].map(sl => inv[sl]), att:'OA', az:A[2]};
+  const land = [-2.6,5.4];
+  const setr = setterAfter(ctx, whoTakes(land, S));
+
+  return [
+    {t:0, phase:'Quick is coming',
+     coach:'The opponent middle is already in the air as the setter touches the ball. You will not have time to watch the set \u2014 you have to have read it.',
+     zones:switchedBase(ctx.lu),
+     opp:{OS:{p:[1.1,-1.7], pose:'set'}, OA:{p:[.4,-2.2], pose:'approach'}},
+     ball:[1.1,-1.7,2.3]},
+
+    {t:.9, phase:'One blocker, maybe two',
+     coach:'Against a true quick your middle is usually alone. The pin blocker helps only if the set is slower than it looked.',
+     zones:blend(switchedBase(ctx.lu), S, .75),
+     opp:{OS:{p:[1.1,-1.7], pose:'ready'}, OA:{p:[.25,-1.1], pose:'swing', jump:.8}},
+     ball:[A[0],A[1],A[2]], arc:.5},
+
+    {t:1.7, phase:'Contact',
+     coach:'A quick is hit flat and from close to the net, so the block is narrower and more of the floor stays lit. Back row starts lower than against an outside set.',
+     zones:S, shadow:info,
+     opp:{OA:{p:[A[0],A[1]], pose:'swing', jump:.8}},
+     ball:[A[0],A[1],A[2]]},
+
+    {t:2.5, phase:'Dig',
+     coach:'It beats the single block into the deep angle. Both deep defenders are standing in the lit floor for exactly this ball.',
+     zones:S, shadow:info, resp:true,
+     opp:{OA:{p:[A[0],A[1]], pose:'ready'}},
+     ball:[land[0],land[1],.5]},
+
+    {t:3.6, phase:'Transition',
+     coach:'Middle lands and turns straight into their own approach. The faster your middle transitions, the more the opponent has to respect.',
+     zones:(()=>{
+       const o = blend(S, switchedBase(ctx.lu), .8);
+       o[setr.zone] = {p:[.7,1.9], pose:'set',
+         tag:setr.emergency ? 'Emergency setter' : 'Setter',
+         note:setr.emergency ? EMERGENCY_NOTE : SET_NOTE};
+       return o;
+     })(),
+     opp:{OA:{p:[A[0],-2.2], pose:'ready'}},
+     ballAt:setr.zone, ball:[.7,1.9,2.5], arc:1.9}
+  ];
+}
+
+/* =============== state =============== */
+const ui = {
+  scenario:'right', rotation:1, system:'perimeter', libero:true,
+  showOpen:true, showCross:true, showTrails:true, showLabels:true, focus:'',
+  overrides:{},
+  playing:true, t:0, speed:1
+};
+let steps = [], duration = 1, ctx = null, probePoint = null;
+
+function rebuild(){
+  ui.overrides = {};
+  refreshMoved();
+  const {lu, hidden} = lineup(ui.rotation, ui.libero);
+  ctx = {rotation:ui.rotation, system:ui.system, libero:ui.libero, lu, hidden};
+  const sc = SCENARIOS.find(s => s.id === ui.scenario);
+  steps = sc.build(ctx);
+  lastPoseT = -99; lastResp = null;            // new clip: take the first frame as given
+  duration = steps[steps.length-1].t + .9;
+  refreshLabels();
+  refreshFocusList();
+  if(probePoint) answerProbe();
+}
+
+function refreshLabels(){
+  for(const z of ZONES){
+    const role = ctx.lu[z];
+    const col = role === 'L' ? COL.lib : role === 'S' ? COL.setter : COL.team;
+    const hex = '#' + col.toString(16).padStart(6,'0');
+    const a = actors[z];
+    if(a.label.material.map) a.label.material.map.dispose();
+    a.label.material.map = labelTexture(`${role}\u00b7${z}`, hex);
+    a.label.material.needsUpdate = true;
+    a.ring.material.color.setHex(col);
+  }
+  for(const id of OPP_IDS){
+    const a = oppActors[id];
+    if(a.label.material.map) a.label.material.map.dispose();
+    a.label.material.map = labelTexture('OPP', '#ff6274');
+    a.label.material.needsUpdate = true;
+  }
+}
+
+/* Follow a PERSON, not a court position: the selection is a role, resolved to
+   whatever zone that player currently occupies. Rotating no longer swaps who
+   you are watching. */
+function zoneOfRole(role){
+  if(!role || !ctx) return null;
+  return ZONES.find(z => ctx.lu[z] === role)
+      || ZONES.find(z => ctx.hidden[z] === role)
+      || null;
+}
+function refreshFocusList(){
+  const sel = document.getElementById('focus');
+  const keep = ui.focus;
+  const roles = ui.libero ? [...ORDER, 'L'] : [...ORDER];
+  sel.innerHTML = '<option value="">Whole team</option>';
+  for(const r of roles){
+    const z = zoneOfRole(r);
+    const o = document.createElement('option');
+    o.value = r;
+    o.textContent = z ? `${r} \u2014 zone ${z.slice(1)}` : `${r} \u2014 off court`;
+    sel.appendChild(o);
+  }
+  ui.focus = roles.includes(keep) ? keep : '';
+  sel.value = ui.focus;
+}
+
+/* --- timeline sampling --- */
+function sample(t){
+  let i = 0;
+  while(i < steps.length-1 && steps[i+1].t <= t) i++;
+  const a = steps[i], b = steps[Math.min(i+1, steps.length-1)];
+  const span = Math.max(.0001, b.t - a.t);
+  const u = b === a ? 0 : Math.max(0, Math.min(1, (t - a.t)/span));
+
+  const zones = {};
+  for(const z of ZONES){
+    const za = a.zones[z] || b.zones[z], zb = b.zones[z] || a.zones[z];
+    if(!za) continue;
+    zones[z] = {
+      p:[za.p[0] + (zb.p[0]-za.p[0])*u, za.p[1] + (zb.p[1]-za.p[1])*u],
+      jump:(za.jump||0) + ((zb.jump||0) - (za.jump||0))*u,
+      jumpA:(za.jump||0), jumpB:(zb.jump||0),
+      pose:za.pose || 'ready', poseNext:zb.pose || za.pose || 'ready',
+      tag:za.tag, note:za.note
+    };
+  }
+  const opp = {};
+  const ids = new Set([...Object.keys(a.opp||{}), ...Object.keys(b.opp||{})]);
+  for(const id of ids){
+    const oa = (a.opp||{})[id], ob = (b.opp||{})[id];
+    if(!oa && !ob) continue;
+    const s0 = oa || ob, s1 = ob || oa;
+    opp[id] = {
+      p:[s0.p[0] + (s1.p[0]-s0.p[0])*u, s0.p[1] + (s1.p[1]-s0.p[1])*u],
+      jump:(s0.jump||0) + ((s1.jump||0) - (s0.jump||0))*u,
+      jumpA:(s0.jump||0), jumpB:(s1.jump||0),
+      pose:s0.pose || 'ready', poseNext:s1.pose || s0.pose || 'ready'
+    };
+  }
+  /* anyone the user has dragged stays where they were put */
+  for(const k in ui.overrides){
+    if(zones[k]) zones[k] = {...zones[k], p:[...ui.overrides[k]]};
+    else if(opp[k]) opp[k] = {...opp[k], p:[...ui.overrides[k]]};
+  }
+
+  /* Two people cannot stand in the same place. A few relaxation passes push
+     anyone who ends up overlapping apart; a player the user has placed by hand
+     is treated as immovable, so only the other one gives way. */
+  const MIN_GAP = 1.15;
+  for(let pass=0; pass<3; pass++){
+    for(let m=0; m<ZONES.length; m++){
+      for(let n=m+1; n<ZONES.length; n++){
+        const za = zones[ZONES[m]], zb = zones[ZONES[n]];
+        if(!za || !zb) continue;
+        let dx = zb.p[0]-za.p[0], dy = zb.p[1]-za.p[1];
+        let d = Math.hypot(dx, dy);
+        if(d >= MIN_GAP) continue;
+        if(d < 1e-4){ dx = (m%2 ? 1 : -1); dy = .01; d = 1; }
+        dx /= d; dy /= d;
+        const pinA = !!ui.overrides[ZONES[m]], pinB = !!ui.overrides[ZONES[n]];
+        if(pinA && pinB) continue;
+        const gap = MIN_GAP - d;
+        const sa = pinA ? 0 : (pinB ? gap : gap/2);
+        const sb = pinB ? 0 : (pinA ? gap : gap/2);
+        if(sa) zones[ZONES[m]] = {...za, p:[za.p[0]-dx*sa, za.p[1]-dy*sa]};
+        if(sb) zones[ZONES[n]] = {...zb, p:[zb.p[0]+dx*sb, zb.p[1]+dy*sb]};
+      }
+    }
+  }
+
+  /* The ball goes where the people are. A step can anchor it to a player, so
+     a setter who has been dragged to the back row sets from the back row
+     instead of from the spot the scenario was written around. */
+  /* Anchor each end of the flight to where that player stands AT THAT STEP,
+     not to where they happen to be right now. Using the live position for
+     both ends meant the ball's own start and finish slid around while it was
+     still in the air, which is what made the flight look broken. A drag still
+     moves it, because an override counts as that step's position. */
+  const anchorAt = (st)=>{
+    if(!st.ballAt) return null;
+    if(ui.overrides[st.ballAt]) return [...ui.overrides[st.ballAt]];
+    const r = (st.zones || {})[st.ballAt];
+    if(r) return [...r.p];
+    return zones[st.ballAt] ? [...zones[st.ballAt].p] : null;
+  };
+  const ba = anchorAt(a) || a.ball, bb = anchorAt(b) || b.ball;
+  let bz = a.ball[2] + (b.ball[2]-a.ball[2])*u;
+  if(b.arc) bz += b.arc * Math.sin(Math.PI*u);
+  const bp = [ba[0] + (bb[0]-ba[0])*u, ba[1] + (bb[1]-ba[1])*u, bz];
+
+  /* Now that the ball height is known, turn the keyframe poses into actual
+     movement: plants, jumps that start from the floor, blocks that land. */
+  for(const z in zones) zones[z] = motion(zones[z], u, bp[2], span);
+  for(const id in opp)  opp[id]  = motion(opp[id],  u, bp[2], span);
+
+  /* look a step or two ahead for the next time the ball reaches the floor,
+     so the cross can mark the landing spot while it is still in the air */
+  let landing = null;
+  for(let k=i+1; k<Math.min(steps.length, i+3); k++){
+    if(steps[k].ball[2] <= .8){ landing = [steps[k].ball[0], steps[k].ball[1]]; break; }
+  }
+
+  /* Defenders do not stand rooted while a ball drops in front of them. If it
+     is coming down shorter than where they are standing, they step in to meet
+     it. Small on purpose: it should read as adjusting, not as abandoning the
+     position the scenario is teaching. */
+  if(landing && bp[2] > 1.2){
+    for(const z of ZONES){
+      const d = zones[z];
+      if(!d || ui.overrides[z] || (d.jump||0) > .05) continue;
+      if(d.pose === 'block' || d.pose === 'blockload' || /block/i.test(d.tag || '')) continue;
+      const ahead = d.p[1] - landing[1];          // > 0: the ball lands in front
+      if(ahead <= .4) continue;
+      const dx = landing[0] - d.p[0];
+      const dist = Math.hypot(dx, ahead);
+      const step = Math.min(.45, ahead * .22);
+      zones[z] = {...d, p:[d.p[0] + dx/dist*step, d.p[1] - ahead/dist*step]};
+    }
+  }
+
+  /* Who plays this ball is decided from where everyone actually is, not from
+     a name written into the scenario. Move them toward it, but only as far as
+     a player could really cover - if it is out of reach it drops, which is the
+     whole point of the perimeter-versus-middle-up comparison. */
+  let resp = null, respOk = true;
+  if(!a.resp) lastResp = null;
+  if(a.resp){
+    const setup = {};
+    for(const z of ZONES){
+      const d = zones[z];
+      if(d) setup[z] = {p:d.p, pose:d.pose, tag:d.tag || ''};
+    }
+    const pick = whoTakes([bp[0], bp[1]], setup);
+    /* Two players who are nearly tied can swap responsibility frame to frame,
+       and the ball snaps to whichever one holds it - so it flickers between
+       two pairs of hands. Stay with whoever had it unless somebody is clearly
+       better placed. */
+    if(lastResp && lastResp !== pick && setup[lastResp] && setup[pick]){
+      const dOld = Math.hypot(bp[0]-setup[lastResp].p[0], bp[1]-setup[lastResp].p[1]);
+      const dNew = Math.hypot(bp[0]-setup[pick].p[0],     bp[1]-setup[pick].p[1]);
+      resp = dNew < dOld*.82 ? pick : lastResp;
+    } else resp = pick;
+    lastResp = resp;
+    const d = zones[resp];
+    if(d){
+      const dx = bp[0]-d.p[0], dy = bp[1]-d.p[1];
+      const dist = Math.hypot(dx, dy);
+      /* A defender covers about two metres to a ball already on its way down.
+         Further than that and they genuinely do not get there - which is the
+         whole point of comparing one defensive shape against another, so the
+         engine has to be willing to say the ball dropped. */
+      respOk = bp[2] >= 1.2 || dist <= 1.9;
+      if(!ui.overrides[resp] && dist > .01){
+        const want = Math.max(0, dist - .4);
+        const move = Math.min(want, respOk ? 1.6 : 1.0);
+        zones[resp] = {...d, p:[d.p[0] + dx/dist*move, d.p[1] + dy/dist*move]};
+      }
+    }
+  }
+
+  /* The lit floor belongs to the swing, so it is built from this step's own
+     authored geometry rather than from positions that are still sliding
+     toward the next step. Otherwise it swells and slides across the court as
+     the blockers land and the hitter walks away, long after the swing that
+     cast it is over. Dragging someone still moves it, because an override
+     counts as that step's geometry. */
+  let shadow = null;
+  if(a.shadow){
+    const at = (src, k) => ui.overrides[k] ? ui.overrides[k]
+                         : ((src || {})[k] ? (src || {})[k].p : null);
+    const xs = a.shadow.blockers
+      .map(z => at(a.zones, z) || (zones[z] && zones[z].p))
+      .filter(Boolean).map(q => q[0]);
+    const ap = at(a.opp, a.shadow.att) || (opp[a.shadow.att] && opp[a.shadow.att].p);
+    if(xs.length && ap)
+      shadow = [ap[0], ap[1], a.shadow.az, Math.min(...xs) - .33, Math.max(...xs) + .33];
+  }
+  /* and once the rally has moved past it, it fades out instead of morphing */
+  const shadowFade = (a.shadow && !b.shadow) ? 1 - u : 1;
+
+  return {zones, opp, ball:bp, step:a, shadow, shadowFade, resp, respOk, landing};
+}
+
+/* --- drawing --- */
+function paintActor(a, cx, cy, h, pose, col, opacity, label, aim){
+  const f = a.fig;
+  applyPose(f, pose);
+  f.root.position.set(cx, h, cy);
+  const dx = aim[0]-cx, dz = aim[1]-cy;
+  if(Math.hypot(dx, dz) > .3){            // too close to aim at, keep the last
+    let turn = Math.atan2(-dx, -dz) - f.yaw;
+    while(turn >  Math.PI) turn -= 2*Math.PI;
+    while(turn < -Math.PI) turn += 2*Math.PI;
+    f.yaw += turn * .35;
+  }
+  f.root.rotation.y = f.yaw;
+  f.mat.color.setHex(col);
+  f.mat.emissive.setHex(col);
+  f.mat.opacity = opacity;
+  f.root.visible = true;
+  f.root.updateMatrixWorld(true);
+  a.pad.position.set(cx, .02, cy);
+  a.pad.material.color.setHex(col);
+  a.pad.material.opacity = .3*opacity;
+  a.pad.visible = true;
+  const lblY = (pose === 'block' || pose === 'swing' || pose === 'serve') ? 2.95 : 2.35;
+  a.label.position.set(cx, lblY + h, cy);
+  a.label.visible = ui.showLabels && label;
+  a.label.material.opacity = opacity;
+}
+
+/* Pose follows what the player is actually doing: reaching the ball, or moving. */
+function livePose(authored, z, d, s, a, dt){
+  if(authored !== 'ready') return authored;
+  const reach = Math.hypot(s.ball[0]-d.p[0], s.ball[1]-d.p[1]);
+  if(s.resp === z && reach < 2.9 && s.ball[2] < 1.9){
+    return s.ball[2] < 1.0 ? 'dig_low' : 'pass';
+  }
+  if(a.last && dt > 0){
+    const sp = Math.hypot(d.p[0]-a.last[0], d.p[1]-a.last[1])/dt;
+    if(sp > 2.0) return 'run';
+  }
+  return authored;
+}
+
+function frame(dt){
+  poseDt = dt;
+  poseSnap = Math.abs(ui.t - lastPoseT) > .3;   // a scrub is not a movement
+  lastPoseT = ui.t;
+
+  const s = sample(ui.t);
+  const focus = zoneOfRole(ui.focus);
+  let respContact = null, setContact = null;
+
+  for(const z of ZONES){
+    const d = s.zones[z];
+    const a = actors[z];
+    if(!d){ a.fig.root.visible = false; a.pad.visible = false; a.label.visible = false; a.ring.visible = false; a.trail.visible = false; a.last = null; continue; }
+    const role = ctx.lu[z];
+    let col = role === 'L' ? COL.lib : role === 'S' ? COL.setter : COL.team;
+    let op = 1;
+    if(focus && focus !== z){ col = COL.dim; op = .5; }
+    if(focus === z) col = COL.focus;
+    if(s.resp === z && !focus) col = COL.focus;
+    const pose = livePose(d.pose, z, d, s, a, dt);
+    paintActor(a, d.p[0], d.p[1], d.jump||0, pose, col, op, true,
+               facePoint(pose, d.p, s.ball));
+    a.last = [d.p[0], d.p[1]];
+    if(s.resp === z) respContact = handPoint(a.fig, pose);
+    else if(!setContact && pose === 'set') setContact = handPoint(a.fig, pose);
+
+    const isResp = s.resp === z;
+    a.ring.visible = isResp || focus === z;
+    a.ring.position.set(d.p[0], .03, d.p[1]);
+    a.ring.material.color.setHex(isResp ? 0xffd166 : COL.team);
+
+    if(ui.showTrails){
+      a.history.push([d.p[0], d.p[1]]);
+      if(a.history.length > 90) a.history.shift();
+      const pts = [];
+      for(const p of a.history) pts.push(p[0], .05, p[1]);
+      a.trail.geometry.dispose();
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pts,3));
+      a.trail.geometry = g;
+      a.trail.material.color.setHex(col);
+      a.trail.material.opacity = focus && focus !== z ? .12 : .4;
+      a.trail.visible = a.history.length > 2;
+    } else {
+      a.trail.visible = false;
+    }
+  }
+
+  for(const id of OPP_IDS){
+    const d = s.opp[id], a = oppActors[id];
+    if(!d){ a.fig.root.visible = false; a.pad.visible = false; a.label.visible = false; a.ring.visible = false; a.trail.visible = false; continue; }
+    paintActor(a, d.p[0], d.p[1], d.jump||0, d.pose, COL.opp, focus ? .45 : 1, false,
+               facePoint(d.pose, d.p, s.ball));
+    if(d.pose === 'swing' && !respContact) respContact = handPoint(a.fig, 'swing');
+    a.ring.visible = false; a.trail.visible = false;
+  }
+
+  ball.position.set(s.ball[0], Math.max(.11, s.ball[2]), s.ball[1]);
+  /* as the ball arrives, draw it to the hands so contact actually looks like
+     contact instead of the player swiping at thin air */
+  const contact = respContact || setContact;
+  if(contact){
+    /* a partial lerp never quite gets there, so the ball used to hover a
+       hand's width short of the platform; this reaches 1 and touches */
+    const gap = ball.position.distanceTo(contact);
+    if(gap < 1.3) ball.position.lerp(contact, Math.min(1, (1.3-gap)/.7));
+  }
+  /* a ball in flight spins, which also makes the panels read as panels */
+  const travelled = ballPrev.distanceTo(ball.position);
+  ball.rotation.x += travelled * 2.4;
+  ball.rotation.y += travelled * 1.1;
+  ballPrev.copy(ball.position);
+
+  ballGlow.position.copy(ball.position);
+
+  if(ui.showCross && s.landing && s.ball[2] > .7){
+    landCross.position.set(s.landing[0], .045, s.landing[1]);
+    const pulse = 1 + .1*Math.sin(performance.now()/180);
+    landCross.scale.set(pulse, 1, pulse);
+    landCross.visible = true;
+  } else {
+    landCross.visible = false;
+  }
+
+  const focusRole = focus ? ctx.lu[focus] : null;
+  const focusCol = focusRole === 'L' ? COL.lib : focusRole === 'S' ? COL.setter : COL.team;
+  const hasArea = drawArea(s, focus, focusCol);
+  openBaseOpacity = focus ? .13 : .34;   // let the player's own patch read
+  drawOpen(s.shadow, s.shadowFade);
+
+  document.getElementById('phase').textContent = s.step.phase;
+  document.getElementById('coach').textContent = s.step.coach;
+
+  const whoBox = document.getElementById('whoBox');
+  const shown = focus || s.resp;
+  if(shown && s.zones[shown]){
+    const d = s.zones[shown];
+    whoBox.hidden = false;
+    const dropped = !focus && s.resp === shown && !s.respOk;
+    document.getElementById('whoTag').textContent = dropped
+      ? 'Nobody reaches this \u2014 it drops'
+      : (focus ? '' : 'Plays this ball \u2014 ') + (d.tag || 'In position');
+    document.getElementById('whoName').textContent = `${ctx.lu[shown]} \u00b7 zone ${shown.slice(1)}`;
+    document.getElementById('whoNote').textContent = dropped
+      ? (d.tag || 'The nearest defender') + ' is closest, but still too far away '
+        + 'to play it. This is the ball the shape did not cover \u2014 which is '
+        + 'the point of the comparison, not a gap in it.'
+      : (d.note || 'Holding position for this phase.');
+    const hint = document.getElementById('areaHint');
+    if(focus && hasArea){
+      hint.hidden = false;
+      hint.textContent = 'The glowing patch is yours. Dig anything that lands inside it. Anything outside belongs to a team-mate \u2014 reaching into their space is how seams get opened.';
+    } else if(focus && (d.pose === 'block' || /block/i.test(d.tag || ''))){
+      hint.hidden = false;
+      hint.textContent = 'You are blocking. Your responsibility is the ball at the net, not a patch of floor - which is why no area is shown.';
+    } else {
+      hint.hidden = true;
+    }
+    if(focus && ctx.lu[focus] !== ui.focus){
+      hint.hidden = false;
+      hint.textContent = ui.focus + ' is off the court in this rotation; the libero is covering their position. ' +
+        (hint.textContent || '');
+    }
+  } else {
+    whoBox.hidden = true;
+  }
+
+  document.getElementById('clock').textContent = ui.t.toFixed(1) + 's';
+  document.getElementById('scrub').value = Math.round(ui.t/duration*1000);
+}
+
+/* --- probe: click the floor, get an answer --- */
+const ray = new THREE.Raycaster();
+const ndc = new THREE.Vector2();
+function probeAt(e){
+  const r = canvas.getBoundingClientRect();
+  ndc.x = ((e.clientX - r.left)/r.width)*2 - 1;
+  ndc.y = -((e.clientY - r.top)/r.height)*2 + 1;
+  ray.setFromCamera(ndc, camera);
+  const hit = ray.intersectObject(court)[0];
+  if(!hit) return;
+  const p = [hit.point.x, hit.point.z];
+  if(p[1] < .2 || p[1] > HALF_L || Math.abs(p[0]) > HALF_W){
+    probePoint = null; marker.visible = false;
+    document.getElementById('probe').hidden = true;
+    return;
+  }
+  probePoint = p;
+  marker.position.set(p[0], .04, p[1]);
+  marker.visible = true;
+  answerProbe();
+}
+function answerProbe(){
+  if(!probePoint) return;
+  const s = sample(ui.t);
+  const setup = {};
+  for(const z of ZONES){
+    const d = s.zones[z];
+    if(d) setup[z] = {p:d.p, pose:d.pose, tag:d.tag || '', note:d.note || ''};
+  }
+  const z = whoTakes(probePoint, setup);
+  const role = ctx.lu[z];
+  const covered = behindBlock(probePoint, s.shadow || openInfoCache);
+  const d = Math.hypot(setup[z].p[0]-probePoint[0], setup[z].p[1]-probePoint[1]);
+  const box = document.getElementById('probe');
+  box.hidden = false;
+  box.innerHTML =
+    `Ball at <b>${probePoint[0].toFixed(1)}&thinsp;m, ${probePoint[1].toFixed(1)}&thinsp;m</b> &rarr; ` +
+    `<b>${role}</b> in zone ${z.slice(1)}, about ${d.toFixed(1)}&thinsp;m away. ` +
+    (covered
+      ? 'This spot is behind the block, so only a tip, a roll shot or a deflection reaches it \u2014 not a hard swing.'
+      : 'This spot is lit, so a hard-driven ball can land here and somebody has to be covering it.');
+}
+
+/* =============== controls =============== */
+const scnList = document.getElementById('scnList');
+for(const s of SCENARIOS){
+  const b = document.createElement('button');
+  b.dataset.id = s.id;
+  b.setAttribute('aria-pressed', String(s.id === ui.scenario));
+  b.innerHTML = `${s.name}<small>${s.sub}</small>`;
+  b.addEventListener('click', ()=>{
+    ui.scenario = s.id; ui.t = 0;
+    for(const z of ZONES) actors[z].history.length = 0;
+    [...scnList.children].forEach(c => c.setAttribute('aria-pressed', String(c.dataset.id === s.id)));
+    rebuild();
+  });
+  scnList.appendChild(b);
+}
+
+const rotSeg = document.getElementById('rotSeg');
+for(let r=1;r<=6;r++){
+  const b = document.createElement('button');
+  b.textContent = 'R' + r; b.dataset.rot = r;
+  b.setAttribute('aria-pressed', String(r === ui.rotation));
+  b.addEventListener('click', ()=> setRotation(r));
+  rotSeg.appendChild(b);
+}
+function setRotation(r){
+  ui.rotation = r;
+  [...rotSeg.children].forEach(c => c.setAttribute('aria-pressed', String(+c.dataset.rot === r)));
+  rebuild();
+}
+
+document.getElementById('sysSeg').addEventListener('click', e=>{
+  const b = e.target.closest('button'); if(!b) return;
+  ui.system = b.dataset.sys;
+  [...e.currentTarget.children].forEach(c => c.setAttribute('aria-pressed', String(c === b)));
+  for(const z of ZONES) actors[z].history.length = 0;
+  rebuild();
+});
+
+document.getElementById('libero').addEventListener('change', e=>{
+  ui.libero = e.target.checked;
+  document.getElementById('liberoHint').textContent = ui.libero
+    ? 'Replaces the back-row middle'
+    : 'Middle plays the back row and passes';
+  rebuild();
+});
+document.getElementById('showOpen').addEventListener('change', e=>{ ui.showOpen = e.target.checked; });
+document.getElementById('showCross').addEventListener('change', e=>{ ui.showCross = e.target.checked; });
+document.getElementById('showTrails').addEventListener('change', e=>{
+  ui.showTrails = e.target.checked;
+  for(const z of ZONES) actors[z].history.length = 0;
+});
+document.getElementById('showLabels').addEventListener('change', e=>{ ui.showLabels = e.target.checked; });
+document.getElementById('focus').addEventListener('change', e=>{ ui.focus = e.target.value; });
+
+const playBtn = document.getElementById('play');
+function setPlaying(v){
+  ui.playing = v;
+  playBtn.innerHTML = v ? '&#10074;&#10074;' : '&#9654;';
+}
+playBtn.addEventListener('click', ()=> setPlaying(!ui.playing));
+document.getElementById('scrub').addEventListener('input', e=>{
+  ui.t = (+e.target.value/1000)*duration;
+  setPlaying(false);
+  for(const z of ZONES) actors[z].history.length = 0;
+});
+document.getElementById('speed').addEventListener('change', e=>{ ui.speed = +e.target.value; });
+
+function refreshMoved(){
+  const b = document.getElementById('resetPos');
+  if(!b) return;
+  const n = Object.keys(ui.overrides).length;
+  b.hidden = n === 0;
+  document.getElementById('movedN').textContent = n;
+}
+document.getElementById('resetPos').addEventListener('click', ()=>{
+  ui.overrides = {}; refreshMoved();
+});
+
+const railToggle = document.getElementById('railToggle');
+railToggle.addEventListener('click', ()=>{
+  const rail = document.getElementById('rail');
+  const open = rail.hidden;
+  rail.hidden = !open;
+  railToggle.setAttribute('aria-expanded', String(open));
+});
+
+addEventListener('keydown', e=>{
+  if(e.target.matches('input,select,button') && e.key !== ' ') return;
+  if(e.key === ' '){ e.preventDefault(); setPlaying(!ui.playing); }
+  if(e.key >= '1' && e.key <= '6') setRotation(+e.key);
+});
+
+/* =============== loop =============== */
+let last = performance.now();
+function tick(now){
+  const dt = Math.min(.05, (now - last)/1000); last = now;
+  if(ui.playing){
+    ui.t += dt*ui.speed;
+    if(ui.t > duration){
+      ui.t = 0;
+      for(const z of ZONES) actors[z].history.length = 0;
+    }
+  }
+  frame(dt);
+  renderer.render(scene, camera);
+  requestAnimationFrame(tick);
+}
+
+rebuild();
+resize();
+placeCamera();
+setPlaying(true);
+requestAnimationFrame(tick);
+</script>
