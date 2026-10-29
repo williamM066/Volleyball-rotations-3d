@@ -1220,42 +1220,90 @@ function setterAfter(ctx, firstTouch){
   return {zone:alt || nominal, emergency:true};
 }
 
-/* --- serve receive: three passers in lanes, everyone else off the net --- */
+/* --- the overlap rules ---
+   Position is judged by where the feet are when the server contacts the ball.
+   Each front-row player must be nearer the net than their back-row
+   counterpart, and within a row the left-to-right order has to hold. Teams get
+   away with extreme receive shapes by switching the instant the ball is
+   struck, but the frame at the serve itself has to be legal. In this court's
+   coordinates zones 2 and 1 are +x, zones 4 and 5 are -x, and y grows away
+   from the net. */
+const OVERLAP = [
+  ['P2','P1',1], ['P3','P6',1], ['P4','P5',1],   // front nearer the net than back
+  ['P4','P3',0], ['P3','P2',0],                   // front row, left to right
+  ['P5','P6',0], ['P6','P1',0]                    // back row, left to right
+];
+/* Nudge an authored shape until it satisfies every rule, rather than trying to
+   hand-place six players legally in six rotations twice over. */
+function legalise(z, margin){
+  const m = (margin === undefined) ? .55 : margin;
+  for(let pass=0; pass<40; pass++){
+    for(const q in z){
+      z[q].p[0] = clamp(z[q].p[0], -4.3, 4.3);
+      z[q].p[1] = clamp(z[q].p[1], .7, 8.6);
+    }
+    let worst = 0;
+    for(const [a,b,ax] of OVERLAP){
+      const A = z[a], B = z[b];
+      if(!A || !B) continue;
+      const over = (A.p[ax] + m) - B.p[ax];
+      if(over <= 0) continue;
+      worst = Math.max(worst, over);
+      A.p[ax] -= over/2;
+      B.p[ax] += over/2;
+    }
+    if(worst < 1e-4) break;
+  }
+  return z;
+}
+
+/* --- serve receive: three passers in lanes, everyone else in their
+       rotational spot, and the whole thing legal --- */
 function recvShape(ctx){
-  const lu = ctx.lu, sw = switchMap(lu);
+  const lu = ctx.lu;
   const setterZone = ZONES.find(z => lu[z] === 'S');
   const passers = ZONES.filter(z =>
     lu[z] === 'OH1' || lu[z] === 'OH2' || lu[z] === 'L' ||
     (!ctx.libero && lu[z].startsWith('MB') && isBack(z)));
-  const LANE = {left:[-2.9,5.7], mid:[0,6.5], right:[2.9,5.7]};
-  const libZone = passers.find(z => lu[z] === 'L' || lu[z].startsWith('MB'));
-  const rest = passers.filter(z => z !== libZone)
-    .sort((a,b) => BASE[sw[a]][0] - BASE[sw[b]][0]);
+
+  /* Lanes go left to right in the passers' own rotational order, so the shape
+     starts out legal instead of having to be dragged into legality. */
+  const side = {P4:-1, P5:-1, P3:0, P6:0, P2:1, P1:1};
+  const ordered = passers.slice().sort((a,b) => side[a] - side[b] || BASE[a][0] - BASE[b][0]);
+  const LANES = [[-2.9, 6.1], [0, 6.6], [2.9, 6.1]];
   const lane = {};
-  if(libZone) lane[libZone] = LANE.left;
-  [LANE.mid, LANE.right].forEach((sl,i)=>{ if(rest[i]) lane[rest[i]] = sl; });
-  passers.forEach(z => { if(!lane[z]) lane[z] = LANE.mid; });
+  ordered.forEach((z,i) => { lane[z] = LANES[Math.min(i, LANES.length-1)]; });
 
   const out = {};
   for(const z of ZONES){
     if(lane[z]){
-      out[z] = {p:[...lane[z]], pose:'ready',
-        tag: z === libZone ? 'Passer - left lane' : 'Passer',
-        note: z === libZone
-          ? 'Left lane is yours, and the biggest share of the court. After the pass you stay here: left back is where you live for the rest of the rally.'
-          : 'One of three passers. Call it early and take everything you can reach - a seam is only a seam if both of you wait.'};
+      const p = [...lane[z]];
+      /* a front-row passer stands clearly in front of the back line, which is
+         both what real teams do and what keeps them legal */
+      if(!isBack(z)) p[1] -= 1.4;
+      out[z] = {p, pose:'ready',
+        tag: isBack(z) ? 'Passer' : 'Passer (front row)',
+        note: isBack(z)
+          ? 'One of three passers. Call it early and take everything you can reach - a seam is only a seam if both of you wait.'
+          : 'Passing from the front row, so stay in front of the player behind you until the ball is struck. The moment it is, release and get off the net for your approach.'};
     } else if(z === setterZone){
+      /* the setter hides as deep or as wide as the rules allow for this
+         rotation, then releases the instant the ball is struck */
       out[z] = isBack(z)
-        ? {p:[3.1,7.2], pose:'ready', tag:'Setter (back row)',
-           note:'Hide at the right back corner, then release to the target the instant the server contacts the ball.'}
-        : {p:[1.4,1.4], pose:'ready', tag:'Setter (front row)',
-           note:'Start at the net right of the middle and open to the passer.'};
+        ? {p:[BASE[z][0]*1.15, 7.4], pose:'ready', tag:'Setter (back row)',
+           note:'Hide as far from the target as the overlap rules allow, then release the instant the server contacts the ball.'}
+        : {p:[BASE[z][0]*.55, 1.6], pose:'ready', tag:'Setter (front row)',
+           note:'Front row, so you start at the net in your own zone and open to the passer.'};
     } else {
-      out[z] = {p:[BASE[sw[z]][0]*.92, 1.5], pose:'ready', tag:'Hitter',
-        note:'Not a passer. Get off the net early so you have room for a full approach.'};
+      /* Rotational position, NOT the switched one: the switch only happens
+         once the ball has been struck. Using the switched spot here put the
+         opposite on the wrong side of the middle in half the rotations. */
+      out[z] = {p:[BASE[z][0]*.92, 1.6], pose:'ready',
+        tag: isBack(z) ? 'Back row' : 'Hitter',
+        note:'Not a passer. Hold your rotational spot until the serve is struck, then get off the net so you have room for a full approach.'};
     }
   }
-  return out;
+  return legalise(out);
 }
 
 /* --- base: everyone switched, reading the setter --- */

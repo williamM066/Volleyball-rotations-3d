@@ -207,6 +207,17 @@ from the net (`0`) to the endline (`9`). The attack line is at `y = 3`.
 - Responsibility is sticky. Two players who are nearly tied used to swap it
   frame to frame, and since the ball snaps to whoever holds it, it flickered
   between two pairs of hands.
+- Serve receive satisfies the overlap rules in all six rotations, with the
+  libero on and off. Position is judged by where the feet are when the server
+  contacts the ball: each front-row player must be nearer the net than their
+  back-row counterpart, and left-to-right order must hold within each row.
+  `legalise()` nudges an authored shape until all seven constraints hold,
+  which beats hand-placing six players legally in twelve different cases.
+- Players stand in their ROTATIONAL spot at the serve, not their switched one.
+  The switch only happens once the ball has been struck. Using the switched
+  spot at the serve put the opposite on the wrong side of the middle, which is
+  an overlap fault, and made a front-row player look like a fourth back-row
+  passer.
 - The contact pull on the ball eases off over about a third of a second after
   a contact. Releasing it in a single frame, which is what happened when
   responsibility switched off, made the ball jump back onto its path - the
