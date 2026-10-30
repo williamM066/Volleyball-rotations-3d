@@ -1519,6 +1519,37 @@ const oppBlock = hitPt =>{
   };
 };
 
+/* A hitter does not swing at a fixed spot regardless of who is in front of
+   them. Rays from the contact point past the block's outer hands decide what
+   is reachable: anything crossing the net inside their hands and below them
+   is blocked. So the hitter aims at the widest corridor the block has left -
+   line if the block is set inside, cross if it is set outside. If there is no
+   corridor, they get blocked, which is the whole point of a closed block and
+   the reason the cover cup exists. This is the same geometry the lit floor is
+   drawn from, so what the tool shows and what the ball does agree. */
+function aimShot(contact, blockXs, yLand){
+  const cx = contact[0], cy = contact[1], cz = contact[2];
+  const t = (0 - cy)/(yLand - cy);
+  const W = HALF_W - .4;
+  if(!(t > 0 && t < 1)) return {x:clamp(cx, -W, W), blocked:false, shot:'line'};
+  const zNet = cz + (.45 - cz)*t;
+  if(zNet > HAND_H)                       // clean over the top of everybody
+    return {x:clamp(-cx*.45, -W, W), blocked:false, shot:'over'};
+  const b0 = Math.min(...blockXs) - .33, b1 = Math.max(...blockXs) + .33;
+  /* landing spots whose ray passes outside the block's outer hands */
+  const edgeL = cx + (b0 - cx)/t;
+  const edgeR = cx + (b1 - cx)/t;
+  const gapL = [-W, Math.min(edgeL, W)];
+  const gapR = [Math.max(edgeR, -W), W];
+  const wL = Math.max(0, gapL[1]-gapL[0]), wR = Math.max(0, gapR[1]-gapR[0]);
+  if(wL < .5 && wR < .5)
+    return {x:clamp((edgeL+edgeR)/2, -W, W), blocked:true, shot:'blocked'};
+  const useL = wL >= wR;
+  const g = useL ? gapL : gapR;
+  return {x:clamp((g[0]+g[1])/2, -W, W), blocked:false,
+          shot:(useL === (cx < 0)) ? 'line' : 'cross'};
+}
+
 /* =============== one rally, built from the markers =============== */
 function buildRally(ctx, kind, m){
   const R = roles(ctx);
@@ -1542,8 +1573,14 @@ function buildRally(ctx, kind, m){
     const st = m.setter, hit = m.hit;
     const D = defShape(ctx, hit[0]);
     const info = {blockers:D.blockers, att:'OA', az:3.2};
-    const sgn = hit[0] >= 0 ? 1 : -1;
-    const dig = [clamp(hit[0] + .95*sgn, -4.2, 4.2), 5.2];
+    const ourBlockX = D.blockers.map(z => D.zones[z] && D.zones[z].p[0])
+                                .filter(v => typeof v === 'number');
+    const theirAim = aimShot([hit[0], hit[1], 3.2], ourBlockX, 5.2);
+    /* a ball that cannot get round the block comes off the hands and drops
+       short instead of carrying to the back of the court */
+    const dig = theirAim.blocked
+      ? [clamp((Math.min(...ourBlockX)+Math.max(...ourBlockX))/2, -4.2, 4.2), 2.7]
+      : [clamp(theirAim.x, -4.2, 4.2), 5.2];
     firstShape = D.zones; firstPt = dig;
     steps.push({t:0, phase:'Their setter has the ball',
       coach:'Drag their setter, and drag where the set is going. The block travels to the ball and the back row builds its shape around the block, not around where the ball is now.',
@@ -1555,8 +1592,10 @@ function buildRally(ctx, kind, m){
       zones:D.zones, shadow:info,
       opp:{...oppBase(), OS:{p:[...st], pose:'ready'}, OA:{p:[...hit], pose:'swing', jump:.82}},
       ball:[hit[0], hit[1], 3.2], arc:1.0});
-    steps.push({t:2.35, phase:'Dig',
-      coach:'It lands in the lit strip, which is exactly where somebody should have been standing.',
+    steps.push({t:2.35, phase:theirAim.blocked ? 'Off the block' : 'Dig',
+      coach:theirAim.blocked
+        ? 'Your block closed the corridor, so the ball came off the hands and dropped short instead of carrying. Somebody has to be in front of the block for exactly this ball.'
+        : 'They hit the ' + theirAim.shot + ' because that is the corridor your block left open, and it lands in the lit strip - which is where somebody should already be standing.',
       zones:D.zones, shadow:info, resp:true,
       opp:{...oppBase(), OA:{p:[...hit], pose:'swing', jump:.25}},
       ball:[dig[0], dig[1], .5]});
@@ -1582,7 +1621,14 @@ function buildRally(ctx, kind, m){
   const hitterZone = (R.pinL && R.pinL !== setr.zone && R.pinL !== predicted)
     ? R.pinL : (R.pinR !== setr.zone ? R.pinR : R.mid);
   const hitPt = (hitterZone === R.pinR) ? PIN_R : PIN_L;
-  const landOpp = [clamp(-hitPt[0]*.5 + 1.1, -4, 4), -5.4];
+  const theirBlock = oppBlock(hitPt);
+  const ourAim = aimShot([hitPt[0], hitPt[1], 3.15],
+                         [theirBlock.OA.p[0], theirBlock.OX.p[0]], -5.4);
+  /* blocked means the ball comes straight back down on our own side, inside
+     about three metres of the hitter - which is precisely where the cup is */
+  const landOpp = ourAim.blocked
+    ? [clamp(hitPt[0] + (hitPt[0] > 0 ? -1.4 : 1.4), -4, 4), 2.5]
+    : [clamp(ourAim.x, -4, 4), -5.4];
 
   /* A setter hiding in the right back corner is nearly six metres from the
      target. Real setters start that run when the serve is struck, not when
@@ -1626,17 +1672,21 @@ function buildRally(ctx, kind, m){
   steps.push({t:t0+2.4, phase:'Our swing',
     coach:'Everyone who is not hitting is covering. The cup is tight because a blocked ball comes straight back down and lands within about three metres of the attacker.',
     zones:shSwing,
-    opp:oppBlock(hitPt), ball:[hitPt[0], hitPt[1], 3.15], arc:1.0});
+    opp:theirBlock, ball:[hitPt[0], hitPt[1], 3.15], arc:1.0});
 
-  steps.push({t:t0+3.3, phase:'It lands',
-    coach:'Through the block and down. A dig that turns into a real attack is the difference between surviving a rally and winning it.',
-    zones:shLand,
-    opp:oppBlock(hitPt), ball:[landOpp[0], landOpp[1], .45]});
+  steps.push({t:t0+3.3, phase:ourAim.blocked ? 'Blocked - cover it' : 'It lands',
+    coach:ourAim.blocked
+      ? 'Their block closed the corridor, so it comes straight back down inside three metres of your hitter. This is the ball the cup exists for, and the reason it has to be low and tight before the swing, not after it.'
+      : 'They left the ' + ourAim.shot + ' open and that is where it went. A dig that turns into a real attack is the difference between surviving a rally and winning it.',
+    zones:shLand, resp:ourAim.blocked ? true : undefined,
+    opp:theirBlock, ball:[landOpp[0], landOpp[1], .45]});
 
-  steps.push({t:t0+4.1, phase:'Point',
-    coach:'Rally finished. Drag a marker, or any player, and run it again from a different starting picture.',
-    zones:shLand,
-    opp:oppBlock(hitPt), ball:[landOpp[0], landOpp[1], .16]});
+  steps.push({t:t0+4.1, phase:ourAim.blocked ? 'Covered' : 'Point',
+    coach:ourAim.blocked
+      ? 'Drag their blockers apart and the corridor opens again. That is the whole argument for a closed block, seen from the other side.'
+      : 'Rally finished. Drag a marker, or any player, and run it again from a different starting picture.',
+    zones:shLand, resp:ourAim.blocked ? true : undefined,
+    opp:theirBlock, ball:[landOpp[0], landOpp[1], .16]});
 
   /* A server does not teleport onto the court behind their own serve: they
      follow it in. Done here, after the rest of the rally exists, because the

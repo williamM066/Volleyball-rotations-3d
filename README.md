@@ -104,6 +104,24 @@ up digging more often than people expect, especially at right back, and when
 that happens the right side takes the second ball instead. `setterAfter()`
 handles it and the panel says what is going on.
 
+**The block is real.** A hitter does not swing at a fixed spot regardless of
+who is in front of them. `aimShot()` casts rays from the contact point past
+the block's outer hands: anything crossing the net inside those hands and
+below them is blocked, so the hitter takes the widest corridor the block has
+left, and the coaching note names which one. Consequences that fall out of the
+geometry rather than being written down:
+
+- Block set inside, taking the angle -> the hitter goes **line**.
+- Block slid to the line -> the hitter goes **cross**.
+- A wide or closed block, or a tight set where the contact is low -> **blocked**,
+  and the ball comes straight back down inside three metres of the hitter,
+  which is exactly where the cover cup is standing.
+
+It is the same geometry the lit floor is drawn from, so what the tool shows
+and what the ball does now agree. Before this, the ball flew through the
+block: it crossed the net at x = -2.36 and 2.75 m, straight through hands
+spanning [-3.23, -1.67] that reach 3.15 m.
+
 **Four viewpoints, tweened not cut.** A formation is a different question from
 each angle, so the camera snaps to the one that answers it. **Top** is how a
 coach draws a rotation on paper, and the only view where spacing and seams are
