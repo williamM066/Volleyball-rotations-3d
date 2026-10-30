@@ -104,6 +104,35 @@ up digging more often than people expect, especially at right back, and when
 that happens the right side takes the second ball instead. `setterAfter()`
 handles it and the panel says what is going on.
 
+**Set calls, and why tempo is the whole argument.** Pick 4, Go, 5, 1, 2, 3,
+Slide or Pipe. Each says where the ball goes, who runs it, and how long the
+other team has to do something about it. That last number is the point.
+
+Their three blockers stand at the two pins and the middle, and they all have
+to *travel* - at the same shuffle speed every other player obeys, less about a
+quarter of a second to read the set. So the block that forms is derived, not
+written down:
+
+| Call | Tempo | What the other team manages |
+|---|---|---|
+| 4 (high outside) | 1.15 s | clean two-man block |
+| Go (fast outside) | 0.78 s | second blocker stops 1.7 m short: **one pair of hands** |
+| 1 (quick) | 0.42 s | **one blocker**, and their hands are still on the way up |
+| 2 (high middle) | 1.00 s | closed double block - and it gets stuffed |
+| 3 (shoot) | 0.65 s | two hands, but late |
+| Slide / Pipe | ~0.7-1.0 s | closes, because the block is already on that side |
+
+A blocker also needs about three quarters of a second to reach full
+extension, so against a quick their hands only get to about 2.6 m and the ball
+goes over the top. That the "2" gets blocked is not a bug: it is the tool
+making its own argument for running tempo instead.
+
+**Who covers what.** Toggle it on and the floor is tinted by who would play a
+ball landing there - the same `whoTakes()` that answers when you click the
+court, run over a grid. The seams you can see are the seams the tool would
+actually name, and they move as you drag people. This is what turns a
+defensive shape from six dots into an argument.
+
 **The block is real.** A hitter does not swing at a fixed spot regardless of
 who is in front of them. `aimShot()` casts rays from the contact point past
 the block's outer hands: anything crossing the net inside those hands and

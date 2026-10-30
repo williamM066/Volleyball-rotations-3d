@@ -177,6 +177,7 @@ select{
   font-size:14px;display:grid;place-items:center;
 }
 #play:hover{filter:brightness(1.12)}
+.seg.wrap{flex-wrap:wrap}
 #scrub{flex:1 1 auto;min-width:0;accent-color:var(--accent);cursor:pointer;height:4px}
 #clock{font-family:var(--font-mono);font-size:11.5px;color:var(--muted);flex:0 0 auto;font-variant-numeric:tabular-nums}
 #speed{width:auto;flex:0 0 auto;padding:5px 7px;font-size:11px}
@@ -245,6 +246,12 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
     </fieldset>
 
     <fieldset>
+      <legend>Set call</legend>
+      <div class="seg wrap" id="setSeg"></div>
+      <p class="hintline" id="setNote"></p>
+    </fieldset>
+
+    <fieldset>
       <legend>Camera</legend>
       <div class="seg" id="viewSeg">
         <button data-view="angle"  aria-pressed="true">Angle</button>
@@ -265,6 +272,10 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
       <label class="sw">
         <input type="checkbox" id="showOpen" checked>
         <span>Area to defend</span>
+      </label>
+      <label class="sw">
+        <input type="checkbox" id="showCov">
+        <span>Who covers what</span>
       </label>
       <label class="sw">
         <input type="checkbox" id="showCross" checked>
@@ -914,6 +925,58 @@ function updateTrail(idx){
   trailGeo.attributes.color.needsUpdate = true;
   ballTrail.visible = n > 1;
 }
+
+/* The floor, coloured by who would play a ball landing on it. It is the same
+   whoTakes() that answers when you click the court, run over a grid, so the
+   seams you can see are the seams the tool would actually name - and they
+   move as you drag people. This is the thing that makes a defensive shape an
+   argument rather than six dots. */
+const COV_NX = 25, COV_NY = 33;
+const ZONE_COL = {};
+const COV_HUE = {P4:.58, P3:.44, P2:.31, P5:.76, P6:.87, P1:.07};
+for(const z of ZONES) ZONE_COL[z] = new THREE.Color().setHSL(COV_HUE[z], .72, .55);
+const covGeo = (function(){
+  const g = new THREE.BufferGeometry(), pos = [], idx = [];
+  for(let iy=0; iy<COV_NY; iy++){
+    const cy = .25 + (HALF_L - .5)*iy/(COV_NY-1);
+    for(let ix=0; ix<COV_NX; ix++)
+      pos.push(-HALF_W + 2*HALF_W*ix/(COV_NX-1), .028, cy);
+  }
+  for(let iy=0; iy<COV_NY-1; iy++)
+    for(let ix=0; ix<COV_NX-1; ix++){
+      const a = iy*COV_NX+ix, b = a+1, c = a+COV_NX, d = c+1;
+      idx.push(a,c,b, b,c,d);
+    }
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(new Float32Array(pos.length), 3));
+  g.setIndex(idx);
+  return g;
+})();
+const covMesh = new THREE.Mesh(covGeo, new THREE.MeshBasicMaterial({
+  vertexColors:true, transparent:true, opacity:.32,
+  side:THREE.DoubleSide, depthWrite:false
+}));
+covMesh.renderOrder = 1; covMesh.visible = false; scene.add(covMesh);
+let covTick = 0;
+function updateCoverage(zones){
+  if(!ui.showCov){ covMesh.visible = false; return; }
+  covMesh.visible = true;
+  if(covTick++ % 5) return;                 // a few times a second is plenty
+  const setup = {};
+  for(const z of ZONES){
+    const d = zones[z];
+    if(d) setup[z] = {p:d.p, pose:d.pose, tag:d.tag || ''};
+  }
+  const col = covGeo.attributes.color.array;
+  const pos = covGeo.attributes.position.array;
+  for(let i=0; i<col.length/3; i++){
+    const who = whoTakes([pos[i*3], pos[i*3+2]], setup);
+    const c = ZONE_COL[who];
+    if(c){ col[i*3] = c.r; col[i*3+1] = c.g; col[i*3+2] = c.b; }
+    else { col[i*3] = col[i*3+1] = col[i*3+2] = .1; }
+  }
+  covGeo.attributes.color.needsUpdate = true;
+}
 function glowTexture(){
   const S = 128;
   const c = document.createElement('canvas'); c.width = c.height = S;
@@ -1441,7 +1504,7 @@ function freeShape(ctx){
 
 /* --- our attack: setter to the target, one hitter swinging, everyone else in
        the cup, because a blocked ball comes straight back down --- */
-function attackShape(ctx, setterZone, hitterZone, hitPt, phase, prev){
+function attackShape(ctx, setterZone, hitterZone, hitPt, phase, prev, approach){
   const out = {};
   /* A front-row middle does not stand and watch the outside hit. They run
      their quick anyway: if the middle jogs off the net, the opposing middle
@@ -1471,7 +1534,8 @@ function attackShape(ctx, setterZone, hitterZone, hitPt, phase, prev){
     note:'Release to the target the instant the ball is up, and set from the same spot every time: predictable for your hitters, unreadable for their block.'};
 
   if(phase === 'build')
-    out[hitterZone] = {p:[clamp(hitPt[0]*1.18,-4.3,4.3), 3.6], pose:'ready', tag:'Hitter',
+    out[hitterZone] = {p:approach ? [...approach] : [clamp(hitPt[0]*1.18,-4.3,4.3), 3.6],
+      pose:'ready', tag:'Hitter',
       note:'Start wide and deep. Approach into the ball, not across it - your angle decides your shot before you touch it.'};
   else if(phase === 'swing')
     out[hitterZone] = {p:[...hitPt], pose:'swing', jump:.82, tag:'Hitter',
@@ -1508,14 +1572,64 @@ const oppBase = ()=>({OS:{p:[-.9,-2.0], pose:'ready'},
 /* Their block forms opposite our hitter. x runs the same way on both sides of
    the net, so a blocker facing a hitter stands at roughly the SAME x, not the
    mirrored one - mirroring puts the block on the wrong side of the court. */
-const oppBlock = hitPt =>{
-  const sgn = hitPt[0] >= 0 ? 1 : -1;
-  const px = clamp(hitPt[0] - .35*sgn, -4, 4);     // outside hand on the hitter
-  const mx = clamp(px - .9*sgn, -4, 4);            // middle closes to them
+/* =============== the set calls ===============
+   Where the ball goes, who runs it, and - the part that matters - how long
+   the other team has to do something about it. Tempo is not decoration here:
+   their middle blocker starts in the middle of the net and has to travel, at
+   the same shuffle speed everybody else obeys, so a quick is defended by one
+   pair of hands and a high outside ball by two. */
+const SETS = [
+  {id:'4', name:'4', sub:'High outside', slot:'P4', p:[-3.3,.95], tempo:1.15,
+   note:'The bread-and-butter high ball to the left pin. Slow enough that their middle has time to travel and close, so you are hitting two blockers. You win this one with shot selection, not with speed.'},
+  {id:'go', name:'Go', sub:'Fast outside', slot:'P4', p:[-3.4,.95], tempo:.78,
+   note:'The same place, flatter and faster. Watch their middle arrive late: the seam between the two blockers is the whole point of running tempo on the pin.'},
+  {id:'5', name:'5', sub:'Back set', slot:'P2', p:[3.3,.95], tempo:1.15,
+   note:'Back set to the right pin. The setter cannot see it, which is why it is a trust ball, and why a block that is reading the setter picks it up late.'},
+  {id:'1', name:'1', sub:'Quick in front', slot:'P3', p:[.5,.8], tempo:.42,
+   note:'The quick, right in front of the setter. Their middle is already standing there, so you are not beating them sideways - you are beating them upward. At this tempo their hands are barely off the floor and you hit over them.'},
+  {id:'2', name:'2', sub:'High middle', slot:'P3', p:[-.7,.9], tempo:1.0,
+   note:'A higher middle ball. Much easier to hit cleanly, but slow enough that the block gets up with you. Useful when the pass is poor and the quick is not on.'},
+  {id:'3', name:'3', sub:'Shoot', slot:'P3', p:[-1.9,.85], tempo:.65,
+   note:'Flat and fast between the middle and the left pin. It attacks the seam, which is the hardest place on the net for two blockers to close.'},
+  {id:'slide', name:'Slide', sub:'Behind the setter', slot:'P3', p:[2.4,.8], tempo:.72,
+   from:[-.5,2.6],
+   note:'The middle runs behind the setter and hits off one foot. Their block has to travel the other way, against its own momentum. That is the whole idea.'},
+  {id:'pipe', name:'Pipe', sub:'Back row through 6', slot:'P6', p:[0,3.2], tempo:1.05,
+   from:[.2,6.3],
+   note:'A back-row attack through the middle, taking off behind the three metre line. It gives you a fourth hitter, which is what stops their middle committing to your quick.'}
+];
+function setCall(){ return SETS.find(c => c.id === ui.set) || SETS[0]; }
+
+/* How high their hands actually get. A blocker needs about three quarters of
+   a second to read, load and reach full extension; inside that they are still
+   on the way up, and a ball over late hands is how a quick scores. */
+function blockReach(tempo){
+  return HAND_H - clamp((.75 - tempo)*1.6, 0, 1.1);
+}
+
+const oppBlock = (hitPt, tempo)=>{
+  const hx = hitPt[0], sgn = hx >= 0 ? 1 : -1;
+  /* Their three front-row blockers stand at the two pins and the middle, and
+     they all have to TRAVEL - nobody is conveniently already where the ball
+     is going. Reach is the shuffle speed times the time they have, less about
+     a quarter of a second to read the set in the first place. */
+  const reach = GAIT.shuffle * Math.max(0, (tempo || 1.1) - .25);
+  const travel = (from, to) => from + Math.sign(to - from)*Math.min(Math.abs(to - from), reach);
+  const starts = [-2.9, 0, 2.9].sort((a,b) => Math.abs(a-hx) - Math.abs(b-hx));
+  const pWant = clamp(hx - .35*sgn, -4, 4);
+  const px = clamp(travel(starts[0], pWant), -4, 4);
+  const hWant = clamp(px - .9*sgn, -4, 4);
+  const mx = clamp(travel(starts[1], hWant), -4, 4);
+  /* If the second blocker never got near the first, this is a one-man block
+     and the pair of them must not be treated as a wall. */
+  const joined = Math.abs(mx - px) < 1.6;
+  const late = !joined || Math.abs(px - pWant) > .05 || Math.abs(mx - hWant) > .05;
   return {
     OS:{p:[clamp(-2.4*sgn, -4, 4), -2.9], pose:'ready'},
     OA:{p:[px, -.5], pose:'block', jump:.6},
-    OX:{p:[mx, -.5], pose:'block', jump:.55}
+    OX:{p:[mx, -.5], pose:'block', jump: joined ? .55 : .3},
+    xs: joined ? [px, mx] : [px, px],
+    joined, late
   };
 };
 
@@ -1527,13 +1641,14 @@ const oppBlock = hitPt =>{
    corridor, they get blocked, which is the whole point of a closed block and
    the reason the cover cup exists. This is the same geometry the lit floor is
    drawn from, so what the tool shows and what the ball does agree. */
-function aimShot(contact, blockXs, yLand){
+function aimShot(contact, blockXs, yLand, handH){
   const cx = contact[0], cy = contact[1], cz = contact[2];
   const t = (0 - cy)/(yLand - cy);
   const W = HALF_W - .4;
   if(!(t > 0 && t < 1)) return {x:clamp(cx, -W, W), blocked:false, shot:'line'};
   const zNet = cz + (.45 - cz)*t;
-  if(zNet > HAND_H)                       // clean over the top of everybody
+  const reach = (handH === undefined) ? HAND_H : handH;
+  if(zNet > reach)                        // clean over the top of everybody
     return {x:clamp(-cx*.45, -W, W), blocked:false, shot:'over'};
   const b0 = Math.min(...blockXs) - .33, b1 = Math.max(...blockXs) + .33;
   /* landing spots whose ray passes outside the block's outer hands */
@@ -1618,12 +1733,26 @@ function buildRally(ctx, kind, m){
   /* who makes the first contact decides who is allowed to set the second */
   const predicted = whoTakes(firstPt, firstShape);
   const setr = setterAfter(ctx, predicted);
-  const hitterZone = (R.pinL && R.pinL !== setr.zone && R.pinL !== predicted)
-    ? R.pinL : (R.pinR !== setr.zone ? R.pinR : R.mid);
-  const hitPt = (hitterZone === R.pinR) ? PIN_R : PIN_L;
-  const theirBlock = oppBlock(hitPt);
-  const ourAim = aimShot([hitPt[0], hitPt[1], 3.15],
-                         [theirBlock.OA.p[0], theirBlock.OX.p[0]], -5.4);
+  /* whoever the call belongs to runs it, unless they are the one setting */
+  const call = setCall();
+  const callZone = R.inv[call.slot];
+  /* A libero may not complete an attack above the net, so a pipe run by the
+     libero is not a pipe - it is a fault. If the call belongs to someone who
+     cannot run it, the outside takes the ball instead and the panel says so. */
+  const cantRun = !callZone || callZone === setr.zone || ctx.lu[callZone] === 'L';
+  const hitterZone = !cantRun ? callZone
+                   : (R.pinL !== setr.zone ? R.pinL : R.pinR);
+  const onCall = hitterZone === callZone && !cantRun;
+  const whyNot = !cantRun ? '' :
+    (callZone && ctx.lu[callZone] === 'L')
+      ? 'The libero is in that position this rotation and may not attack above the net, so the outside takes it instead. '
+      : 'Whoever runs that call is setting this ball, so the outside takes it instead. ';
+  const hitPt = onCall ? [...call.p] : [...PIN_L];
+  const tempo = onCall ? call.tempo : 1.15;
+  const contactZ = 3.4 - tempo*.35;         // a faster ball is hit lower
+  const theirBlock = oppBlock(hitPt, tempo);
+  const ourAim = aimShot([hitPt[0], hitPt[1], contactZ], theirBlock.xs, -5.4,
+                         blockReach(tempo));
   /* blocked means the ball comes straight back down on our own side, inside
      about three metres of the hitter - which is precisely where the cup is */
   const landOpp = ourAim.blocked
@@ -1648,7 +1777,8 @@ function buildRally(ctx, kind, m){
      than standing still and then sprinting the whole way in one second. */
   if(hitterZone !== predicted && steps[1] && steps[1].zones[hitterZone]){
     const from = steps[1].zones[hitterZone].p;
-    const to = [clamp(hitPt[0]*1.18,-4.3,4.3), 3.6];
+    const to = (onCall && call.from) ? [...call.from]
+             : [clamp(hitPt[0]*1.18,-4.3,4.3), 3.6];
     steps[1] = {...steps[1], zones:{...steps[1].zones,
       [hitterZone]:{...steps[1].zones[hitterZone],
         p:[from[0] + (to[0]-from[0])*.5, from[1] + (to[1]-from[1])*.5],
@@ -1658,30 +1788,38 @@ function buildRally(ctx, kind, m){
 
   /* each shape is laid out from the one before it, so nobody is re-sorted
      into a different corner of the court half way through the rally */
-  const shBuild = attackShape(ctx, setr.zone, hitterZone, hitPt, 'build', firstShape);
-  const shSwing = attackShape(ctx, setr.zone, hitterZone, hitPt, 'swing', shBuild);
-  const shLand  = attackShape(ctx, setr.zone, hitterZone, hitPt, 'land',  shBuild);
+  const approach = onCall && call.from ? call.from : null;
+  const shBuild = attackShape(ctx, setr.zone, hitterZone, hitPt, 'build', firstShape, approach);
+  const shSwing = attackShape(ctx, setr.zone, hitterZone, hitPt, 'swing', shBuild, approach);
+  const shLand  = attackShape(ctx, setr.zone, hitterZone, hitPt, 'land',  shBuild, approach);
 
-  steps.push({t:t0+1.25, phase:setr.emergency ? 'Setter dug it - right side sets' : 'Up to the target',
+  const tSet  = t0 + 1.25;
+  const tHit  = tSet + tempo;
+  const tLand = tHit + .9;
+  steps.push({t:tSet, phase:setr.emergency ? 'Setter dug it - right side sets' : 'Up to the target',
     coach:setr.emergency
       ? 'The setter played the first ball, so they are not allowed to touch it again. The right side steps in and sets instead. Teams that have not rehearsed this lose the rally here.'
       : 'The setter is already at the target. Everyone who is not setting is either approaching or getting ready to cover.',
     zones:shBuild,
     opp:oppBase(), ballAt:setr.zone, ball:[TARGET[0], TARGET[1], 2.7], arc:1.3});
 
-  steps.push({t:t0+2.4, phase:'Our swing',
-    coach:'Everyone who is not hitting is covering. The cup is tight because a blocked ball comes straight back down and lands within about three metres of the attacker.',
+  steps.push({t:tHit, phase:'Our swing \u2014 ' + call.name,
+    coach:whyNot + call.note + (theirBlock.joined
+      ? (theirBlock.late
+         ? ' They got two hands there but only just, and the seam between them is still open.'
+         : ' They had time to close, so this is a clean two-man block.')
+      : ' Their second blocker never got across: you are hitting one pair of hands.'),
     zones:shSwing,
-    opp:theirBlock, ball:[hitPt[0], hitPt[1], 3.15], arc:1.0});
+    opp:theirBlock, ball:[hitPt[0], hitPt[1], contactZ], arc:1.0});
 
-  steps.push({t:t0+3.3, phase:ourAim.blocked ? 'Blocked - cover it' : 'It lands',
+  steps.push({t:tLand, phase:ourAim.blocked ? 'Blocked - cover it' : 'It lands',
     coach:ourAim.blocked
       ? 'Their block closed the corridor, so it comes straight back down inside three metres of your hitter. This is the ball the cup exists for, and the reason it has to be low and tight before the swing, not after it.'
       : 'They left the ' + ourAim.shot + ' open and that is where it went. A dig that turns into a real attack is the difference between surviving a rally and winning it.',
     zones:shLand, resp:ourAim.blocked ? true : undefined,
     opp:theirBlock, ball:[landOpp[0], landOpp[1], .45]});
 
-  steps.push({t:t0+4.1, phase:ourAim.blocked ? 'Covered' : 'Point',
+  steps.push({t:tLand + .8, phase:ourAim.blocked ? 'Covered' : 'Point',
     coach:ourAim.blocked
       ? 'Drag their blockers apart and the corridor opens again. That is the whole argument for a closed block, seen from the other side.'
       : 'Rally finished. Drag a marker, or any player, and run it again from a different starting picture.',
@@ -1733,7 +1871,8 @@ const ui = {
     attack: {setter:[-.9,-1.9],  hit:[3.1,-.55]},
     free:   {from:[1.6,-3.6],    land:[-.6,5.4]}
   },
-  showOpen:true, showCross:true, showTrails:true, showLabels:true, focus:'',
+  showOpen:true, showCov:false, showCross:true, showTrails:true, showLabels:true, focus:'',
+  set:'4',
   overrides:{},
   playing:true, t:0, speed:1, view:'angle'
 };
@@ -2186,6 +2325,7 @@ function frame(dt){
   ballPrev.copy(ball.position);
 
   updateTrail(Math.round(ui.t/SIM_DT));
+  updateCoverage(s.zones);
   ballGlow.position.copy(ball.position);
 
   if(ui.showCross && s.landing && s.ball[2] > .7){
@@ -2386,6 +2526,33 @@ railToggle.addEventListener('click', ()=>{
 for(const b of document.querySelectorAll('#viewSeg button'))
   b.addEventListener('click', ()=> setView(b.dataset.view));
 
+document.getElementById('showCov').addEventListener('change', e=>{
+  ui.showCov = e.target.checked;
+});
+
+const setSeg = document.getElementById('setSeg');
+const setNote = document.getElementById('setNote');
+function paintSetNote(){
+  const c = setCall();
+  setNote.textContent = c.name + ' \u2014 ' + c.sub;
+}
+for(const c of SETS){
+  const b = document.createElement('button');
+  b.textContent = c.name;
+  b.title = c.sub;
+  b.dataset.set = c.id;
+  b.setAttribute('aria-pressed', String(c.id === ui.set));
+  b.addEventListener('click', ()=>{
+    ui.set = c.id;
+    for(const x of setSeg.children)
+      x.setAttribute('aria-pressed', String(x.dataset.set === c.id));
+    paintSetNote();
+    rebuildSteps();
+  });
+  setSeg.appendChild(b);
+}
+paintSetNote();
+
 document.getElementById('shareBtn').addEventListener('click', async e=>{
   const btn = e.currentTarget;
   const url = location.origin + location.pathname + '?s=' + stateToHash();
@@ -2409,7 +2576,7 @@ addEventListener('keydown', e=>{
    and no server. */
 const r1 = v => Math.round(v*10)/10;
 function stateToHash(){
-  const o = {s:ui.scenario, r:ui.rotation, y:ui.system, l:ui.libero ? 1 : 0,
+  const o = {s:ui.scenario, r:ui.rotation, y:ui.system, l:ui.libero ? 1 : 0, c:ui.set,
              m:Object.values(ui.marks[ui.scenario]).map(q => [r1(q[0]), r1(q[1])])};
   const ov = {};
   for(const k in ui.overrides) ov[k] = [r1(ui.overrides[k][0]), r1(ui.overrides[k][1])];
@@ -2421,6 +2588,8 @@ function syncControls(){
     b.setAttribute('aria-pressed', String(+b.textContent.replace(/\D/g,'') === ui.rotation));
   for(const b of document.querySelectorAll('#sysSeg button'))
     b.setAttribute('aria-pressed', String(b.dataset.sys === ui.system));
+  for(const b of document.querySelectorAll('#setSeg button'))
+    b.setAttribute('aria-pressed', String(b.dataset.set === ui.set));
   for(const b of document.querySelectorAll('#scnList button'))
     b.setAttribute('aria-pressed', String(b.dataset.id === ui.scenario));
   document.getElementById('libero').checked = ui.libero;
@@ -2434,6 +2603,7 @@ function readHash(){
     if(o.s && SCENARIOS.some(x => x.id === o.s)) ui.scenario = o.s;
     if(o.r >= 1 && o.r <= 6) ui.rotation = o.r;
     if(o.y === 'perimeter' || o.y === 'rotational') ui.system = o.y;
+    if(o.c && SETS.some(c => c.id === o.c)) ui.set = o.c;
     ui.libero = !!o.l;
     const keys = Object.keys(ui.marks[ui.scenario] || {});
     if(Array.isArray(o.m)) o.m.forEach((q2,i)=>{
