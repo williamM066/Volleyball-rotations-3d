@@ -1624,10 +1624,15 @@ const oppBlock = (hitPt, tempo)=>{
      and the pair of them must not be treated as a wall. */
   const joined = Math.abs(mx - px) < 1.6;
   const late = !joined || Math.abs(px - pWant) > .05 || Math.abs(mx - hWant) > .05;
+  /* players and metadata are kept apart on purpose: anything inside the
+     player map is treated as a person to interpolate, and a stray key with
+     no position takes the whole scene down with it. */
   return {
-    OS:{p:[clamp(-2.4*sgn, -4, 4), -2.9], pose:'ready'},
-    OA:{p:[px, -.5], pose:'block', jump:.6},
-    OX:{p:[mx, -.5], pose:'block', jump: joined ? .55 : .3},
+    players:{
+      OS:{p:[clamp(-2.4*sgn, -4, 4), -2.9], pose:'ready'},
+      OA:{p:[px, -.5], pose:'block', jump:.6},
+      OX:{p:[mx, -.5], pose:'block', jump: joined ? .55 : .3}
+    },
     xs: joined ? [px, mx] : [px, px],
     joined, late
   };
@@ -1810,21 +1815,21 @@ function buildRally(ctx, kind, m){
          : ' They had time to close, so this is a clean two-man block.')
       : ' Their second blocker never got across: you are hitting one pair of hands.'),
     zones:shSwing,
-    opp:theirBlock, ball:[hitPt[0], hitPt[1], contactZ], arc:1.0});
+    opp:theirBlock.players, ball:[hitPt[0], hitPt[1], contactZ], arc:1.0});
 
   steps.push({t:tLand, phase:ourAim.blocked ? 'Blocked - cover it' : 'It lands',
     coach:ourAim.blocked
       ? 'Their block closed the corridor, so it comes straight back down inside three metres of your hitter. This is the ball the cup exists for, and the reason it has to be low and tight before the swing, not after it.'
       : 'They left the ' + ourAim.shot + ' open and that is where it went. A dig that turns into a real attack is the difference between surviving a rally and winning it.',
     zones:shLand, resp:ourAim.blocked ? true : undefined,
-    opp:theirBlock, ball:[landOpp[0], landOpp[1], .45]});
+    opp:theirBlock.players, ball:[landOpp[0], landOpp[1], .45]});
 
   steps.push({t:tLand + .8, phase:ourAim.blocked ? 'Covered' : 'Point',
     coach:ourAim.blocked
       ? 'Drag their blockers apart and the corridor opens again. That is the whole argument for a closed block, seen from the other side.'
       : 'Rally finished. Drag a marker, or any player, and run it again from a different starting picture.',
     zones:shLand, resp:ourAim.blocked ? true : undefined,
-    opp:theirBlock, ball:[landOpp[0], landOpp[1], .16]});
+    opp:theirBlock.players, ball:[landOpp[0], landOpp[1], .16]});
 
   /* A server does not teleport onto the court behind their own serve: they
      follow it in. Done here, after the rest of the rally exists, because the
@@ -1974,6 +1979,7 @@ function intent(t){
     const oa = (a.opp||{})[id], ob = (b.opp||{})[id];
     if(!oa && !ob) continue;
     const s0 = oa || ob, s1 = ob || oa;
+    if(!s0 || !s0.p || !s1 || !s1.p) continue;      // not a player, skip it
     opp[id] = {
       p:[s0.p[0] + (s1.p[0]-s0.p[0])*u, s0.p[1] + (s1.p[1]-s0.p[1])*u],
       jump:(s0.jump||0) + ((s1.jump||0) - (s0.jump||0))*u,

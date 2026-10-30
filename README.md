@@ -336,6 +336,12 @@ from the net (`0`) to the endline (`9`). The attack line is at `y = 3`.
 - x runs the same way on both sides of the net, so a blocker facing a hitter
   stands at roughly the SAME x, not the mirrored one. Mirroring it puts the
   block on the wrong side of the court, which is easy to miss on screen.
+- Anything inside a step's `opp` or `zones` map is treated as a person to
+  interpolate. Putting metadata in there - the block returning its own `xs`
+  and `joined` flags alongside its three players - takes the whole scene down
+  on the first frame, because the interpolator reads `.p[0]` off a flag. The
+  block now returns `{players, xs, joined, late}`, and the interpolator skips
+  entries with no position rather than dying on them.
 - Blockers stand 0.9 m apart, not 1.35 m. The wider spacing left exactly the
   seam the coaching note warns about.
 - Defenders step in up to 0.45 m when the ball is coming down in front of
