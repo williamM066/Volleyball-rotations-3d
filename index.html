@@ -245,6 +245,16 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
     </fieldset>
 
     <fieldset>
+      <legend>Camera</legend>
+      <div class="seg" id="viewSeg">
+        <button data-view="angle"  aria-pressed="true">Angle</button>
+        <button data-view="top"    aria-pressed="false">Top</button>
+        <button data-view="side"   aria-pressed="false">Side</button>
+        <button data-view="behind" aria-pressed="false">Behind</button>
+      </div>
+    </fieldset>
+
+    <fieldset>
       <legend>Options</legend>
       <label class="sw">
         <input type="checkbox" id="libero" checked>
@@ -276,6 +286,7 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
         drag any player to move them. Everything after that &mdash; who plays
         the first ball, who sets, who finishes &mdash; follows from it.</p>
       <button id="resetPos" class="ghost" hidden>Put <span id="movedN">0</span> back</button>
+      <button id="shareBtn" class="ghost">Copy a link to this picture</button>
     </fieldset>
 
     <fieldset>
@@ -609,7 +620,7 @@ fillLight.position.set(-8, 7, -7); scene.add(fillLight);
 
 const orbit = {target:new THREE.Vector3(0,0.9,1.9), r:24, theta:0.15, phi:0.82};
 function placeCamera(){
-  orbit.phi = Math.max(.22, Math.min(1.30, orbit.phi));
+  orbit.phi = Math.max(.05, Math.min(1.32, orbit.phi));
   orbit.r   = Math.max(9, Math.min(42, orbit.r));
   const sp = Math.sin(orbit.phi);
   camera.position.set(
@@ -619,6 +630,48 @@ function placeCamera(){
   );
   camera.lookAt(orbit.target);
 }
+/* Four fixed viewpoints, because a formation is a different question from
+   each one. Top is how a coach draws a rotation on paper and is the only view
+   where spacing and seams are honest. Side shows ball height, jump height and
+   whether the block actually got above the tape. Behind is the hitter's own
+   view of what the block left open. Angle is the general one. Snapping is
+   tweened rather than cut, so you keep your bearings. */
+const VIEWS = {
+  angle:  {theta:  .15, phi: .82, r:24, ty: .9, tz:1.9},
+  top:    {theta:  .00, phi: .07, r:19, ty: .0, tz:1.0},
+  side:   {theta:1.5708, phi:1.14, r:24, ty:1.3, tz:1.0},
+  behind: {theta:  .00, phi:1.16, r:20, ty:1.2, tz:3.0}
+};
+let camTween = null;
+function setView(name){
+  const v = VIEWS[name];
+  ui.view = name;
+  for(const b of document.querySelectorAll('#viewSeg button'))
+    b.setAttribute('aria-pressed', String(b.dataset.view === name));
+  if(!v) return;
+  camTween = {
+    from:{theta:orbit.theta, phi:orbit.phi, r:orbit.r,
+          ty:orbit.target.y, tz:orbit.target.z},
+    to:v, t0:performance.now(), dur:620
+  };
+}
+function stepCamTween(now){
+  if(!camTween) return;
+  const k = Math.min(1, (now - camTween.t0)/camTween.dur);
+  const e = k < .5 ? 2*k*k : 1 - Math.pow(-2*k + 2, 2)/2;   // ease in-out
+  const f = camTween.from, t = camTween.to;
+  let dth = t.theta - f.theta;
+  while(dth >  Math.PI) dth -= 2*Math.PI;
+  while(dth < -Math.PI) dth += 2*Math.PI;
+  orbit.theta    = f.theta + dth*e;
+  orbit.phi      = f.phi + (t.phi - f.phi)*e;
+  orbit.r        = f.r   + (t.r   - f.r  )*e;
+  orbit.target.y = f.ty  + (t.ty  - f.ty )*e;
+  orbit.target.z = f.tz  + (t.tz  - f.tz )*e;
+  placeCamera();
+  if(k >= 1) camTween = null;
+}
+
 function resize(){
   const w = canvas.clientWidth || innerWidth, h = canvas.clientHeight || innerHeight;
   renderer.setSize(w,h,false);
@@ -655,6 +708,12 @@ canvas.addEventListener('pointermove', e=>{
       ui.overrides[drag.player] = pt; simFrames = null; refreshMoved();
     }
   } else {
+    camTween = null;
+    if(ui.view !== 'free'){
+      ui.view = 'free';
+      for(const b of document.querySelectorAll('#viewSeg button'))
+        b.setAttribute('aria-pressed', 'false');
+    }
     orbit.theta -= dx * .006;
     orbit.phi   -= dy * .005;
     placeCamera();
@@ -822,6 +881,39 @@ const ball = new THREE.Mesh(
 );
 ball.renderOrder = 6; scene.add(ball);
 const ballPrev = new THREE.Vector3();
+
+/* A fading ribbon of where the ball has just been. The single cheapest thing
+   that makes a rally followable: you can see what the ball did, not only
+   where it is. Taken straight from the cached simulation, so it is exact at
+   any scrub position rather than accumulated while playing. */
+const TRAIL_N = 30;
+const trailGeo = new THREE.BufferGeometry();
+trailGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(TRAIL_N*3), 3));
+trailGeo.setAttribute('color',    new THREE.BufferAttribute(new Float32Array(TRAIL_N*3), 3));
+const ballTrail = new THREE.Line(trailGeo, new THREE.LineBasicMaterial({
+  vertexColors:true, transparent:true, opacity:.9,
+  blending:THREE.AdditiveBlending, depthWrite:false
+}));
+ballTrail.renderOrder = 5; ballTrail.frustumCulled = false; scene.add(ballTrail);
+function updateTrail(idx){
+  if(!simFrames || !simFrames.length){ ballTrail.visible = false; return; }
+  const pos = trailGeo.attributes.position.array;
+  const col = trailGeo.attributes.color.array;
+  let n = 0;
+  for(let k = TRAIL_N-1; k >= 0; k--){
+    const j = idx - k*2;
+    if(j < 0) continue;
+    const b = simFrames[Math.min(j, simFrames.length-1)].ball;
+    pos[n*3] = b[0]; pos[n*3+1] = Math.max(.11, b[2]); pos[n*3+2] = b[1];
+    const a = Math.pow(1 - k/TRAIL_N, 1.7);
+    col[n*3] = a; col[n*3+1] = .82*a; col[n*3+2] = .42*a;
+    n++;
+  }
+  trailGeo.setDrawRange(0, n);
+  trailGeo.attributes.position.needsUpdate = true;
+  trailGeo.attributes.color.needsUpdate = true;
+  ballTrail.visible = n > 1;
+}
 function glowTexture(){
   const S = 128;
   const c = document.createElement('canvas'); c.width = c.height = S;
@@ -1593,7 +1685,7 @@ const ui = {
   },
   showOpen:true, showCross:true, showTrails:true, showLabels:true, focus:'',
   overrides:{},
-  playing:true, t:0, speed:1
+  playing:true, t:0, speed:1, view:'angle'
 };
 let steps = [], duration = 1, ctx = null, probePoint = null;
 
@@ -2043,6 +2135,7 @@ function frame(dt){
   ball.rotation.y += travelled * 1.1;
   ballPrev.copy(ball.position);
 
+  updateTrail(Math.round(ui.t/SIM_DT));
   ballGlow.position.copy(ball.position);
 
   if(ui.showCross && s.landing && s.ball[2] > .7){
@@ -2240,11 +2333,65 @@ railToggle.addEventListener('click', ()=>{
   railToggle.setAttribute('aria-expanded', String(open));
 });
 
+for(const b of document.querySelectorAll('#viewSeg button'))
+  b.addEventListener('click', ()=> setView(b.dataset.view));
+
+document.getElementById('shareBtn').addEventListener('click', async e=>{
+  const btn = e.currentTarget;
+  const url = location.origin + location.pathname + '?s=' + stateToHash();
+  const done = ()=>{ btn.textContent = 'Link copied'; setTimeout(()=>{
+    btn.textContent = 'Copy a link to this picture'; }, 1800); };
+  try{ await navigator.clipboard.writeText(url); done(); }
+  catch(err){ window.prompt('Copy this link:', url); }
+});
+
 addEventListener('keydown', e=>{
   if(e.target.matches('input,select,button') && e.key !== ' ') return;
   if(e.key === ' '){ e.preventDefault(); setPlaying(!ui.playing); }
   if(e.key >= '1' && e.key <= '6') setRotation(+e.key);
+  const v = {t:'top', s:'side', b:'behind', a:'angle'}[e.key.toLowerCase()];
+  if(v) setView(v);
 });
+
+/* A picture is only useful to a coach if they can send it to a player. The
+   whole state - situation, rotation, system, libero, both markers and anyone
+   dragged out of position - packs into the URL, so sharing needs no account
+   and no server. */
+const r1 = v => Math.round(v*10)/10;
+function stateToHash(){
+  const o = {s:ui.scenario, r:ui.rotation, y:ui.system, l:ui.libero ? 1 : 0,
+             m:Object.values(ui.marks[ui.scenario]).map(q => [r1(q[0]), r1(q[1])])};
+  const ov = {};
+  for(const k in ui.overrides) ov[k] = [r1(ui.overrides[k][0]), r1(ui.overrides[k][1])];
+  if(Object.keys(ov).length) o.o = ov;
+  return btoa(JSON.stringify(o)).replace(/=+$/, '');
+}
+function syncControls(){
+  for(const b of document.querySelectorAll('#rotSeg button'))
+    b.setAttribute('aria-pressed', String(+b.textContent.replace(/\D/g,'') === ui.rotation));
+  for(const b of document.querySelectorAll('#sysSeg button'))
+    b.setAttribute('aria-pressed', String(b.dataset.sys === ui.system));
+  for(const b of document.querySelectorAll('#scnList button'))
+    b.setAttribute('aria-pressed', String(b.dataset.id === ui.scenario));
+  document.getElementById('libero').checked = ui.libero;
+}
+let pendingOverrides = null;
+function readHash(){
+  const q = new URLSearchParams(location.search).get('s');
+  if(!q) return;
+  try{
+    const o = JSON.parse(atob(q));
+    if(o.s && SCENARIOS.some(x => x.id === o.s)) ui.scenario = o.s;
+    if(o.r >= 1 && o.r <= 6) ui.rotation = o.r;
+    if(o.y === 'perimeter' || o.y === 'rotational') ui.system = o.y;
+    ui.libero = !!o.l;
+    const keys = Object.keys(ui.marks[ui.scenario] || {});
+    if(Array.isArray(o.m)) o.m.forEach((q2,i)=>{
+      if(keys[i] && Array.isArray(q2)) ui.marks[ui.scenario][keys[i]] = [q2[0], q2[1]];
+    });
+    if(o.o) pendingOverrides = o.o;
+  }catch(err){ /* a bad link just opens the default picture */ }
+}
 
 /* =============== loop =============== */
 let last = performance.now();
@@ -2257,12 +2404,21 @@ function tick(now){
       for(const z of ZONES) actors[z].history.length = 0;
     }
   }
+  stepCamTween(now);
   frame(dt);
   renderer.render(scene, camera);
   requestAnimationFrame(tick);
 }
 
+readHash();
+syncControls();
 rebuild();
+if(pendingOverrides){
+  ui.overrides = pendingOverrides;
+  pendingOverrides = null;
+  refreshMoved();
+}
+setView(ui.view || 'angle');
 resize();
 placeCamera();
 setPlaying(true);

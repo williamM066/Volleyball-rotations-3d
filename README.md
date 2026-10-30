@@ -104,6 +104,25 @@ up digging more often than people expect, especially at right back, and when
 that happens the right side takes the second ball instead. `setterAfter()`
 handles it and the panel says what is going on.
 
+**Four viewpoints, tweened not cut.** A formation is a different question from
+each angle, so the camera snaps to the one that answers it. **Top** is how a
+coach draws a rotation on paper, and the only view where spacing and seams are
+honest. **Side** shows ball height, jump height and whether the block actually
+got above the tape. **Behind** is the hitter's own view of what the block left
+open. **Angle** is the general one. Dragging the court takes the camera off a
+preset. Keys: `t` `s` `b` `a`.
+
+**A ball trail.** A fading ribbon of where the ball has just been - the single
+cheapest thing that makes a rally followable, because you can see what the
+ball did rather than only where it is. It is read out of the cached
+simulation, so it is exact at any scrub position instead of accumulating while
+playing.
+
+**Shareable links.** A picture is only useful to a coach if they can send it to
+a player. The whole state - situation, rotation, back-row system, libero, both
+markers, and anyone dragged out of position - packs into the URL. No account,
+no server, no storage. "Copy a link to this picture" in the side panel.
+
 **Movement is simulated, not interpolated.** The scenario says where it would
 *like* everybody to be at a given moment; `intent()` reads that off the
 keyframes. It does not move anybody. `simStep()` then moves real bodies toward
