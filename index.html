@@ -120,6 +120,14 @@ legend{
 .sw .hint{color:var(--muted);font-size:10.5px;display:block;margin-top:1px}
 
 .hintline{margin:0;font-size:10.5px;line-height:1.45;color:var(--muted)}
+
+.rng{display:grid;grid-template-columns:58px 1fr 46px;align-items:center;gap:7px;font-size:11.5px}
+.rng span{color:var(--muted)}
+.rng input[type=range]{appearance:none;-webkit-appearance:none;width:100%;height:4px;margin:0;border-radius:3px;background:#16283f;border:1px solid var(--line);cursor:pointer}
+.rng input[type=range]::-webkit-slider-thumb{appearance:none;-webkit-appearance:none;width:13px;height:13px;border:0;border-radius:50%;background:var(--accent);cursor:pointer}
+.rng input[type=range]::-moz-range-thumb{width:13px;height:13px;border:0;border-radius:50%;background:var(--accent);cursor:pointer}
+.rng input[type=range]:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.rng b{font:600 10.5px/1 var(--font-mono);color:var(--fg);text-align:right}
 .ghost{
   font:600 11.5px var(--font-body);color:var(--warn);
   background:rgba(255,209,102,.1);border:1px solid rgba(255,209,102,.35);
@@ -252,6 +260,19 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
     </fieldset>
 
     <fieldset>
+      <legend>Block</legend>
+      <label class="rng"><span>Our height</span>
+        <input type="range" id="ourH" min="160" max="210" step="1"><b id="ourHv"></b></label>
+      <label class="rng"><span>Our jump</span>
+        <input type="range" id="ourJ" min="15" max="95" step="1"><b id="ourJv"></b></label>
+      <label class="rng"><span>Their height</span>
+        <input type="range" id="oppH" min="160" max="210" step="1"><b id="oppHv"></b></label>
+      <label class="rng"><span>Their jump</span>
+        <input type="range" id="oppJ" min="15" max="95" step="1"><b id="oppJv"></b></label>
+      <p class="hintline" id="blockNote"></p>
+    </fieldset>
+
+    <fieldset>
       <legend>Camera</legend>
       <div class="seg" id="viewSeg">
         <button data-view="angle"  aria-pressed="true">Angle</button>
@@ -344,7 +365,7 @@ import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.m
 /* =============== court model ===============
    Court coordinates are metres. Net is at y=0, our side is y>0,
    x runs sideline to sideline. World mapping is (x, height, y). */
-const HALF_W = 4.5, HALF_L = 9, ATTACK = 3, NET_H = 2.43, HAND_H = 3.15;
+const HALF_W = 4.5, HALF_L = 9, ATTACK = 3, NET_H = 2.43;
 const ZONES = ['P1','P2','P3','P4','P5','P6'];
 const BASE = {P1:[2.6,6.6], P2:[2.6,1.5], P3:[0,1.5], P4:[-2.6,1.5], P5:[-2.6,6.6], P6:[0,6.6]};
 const BACK_ROW = ['P1','P5','P6'];
@@ -604,12 +625,19 @@ function handPoint(f, pose){
   return _h1.add(_h2).multiplyScalar(.5).clone();
 }
 
-/* Blockers and hitters look across the net; everybody else watches the ball. */
+/* Blockers and hitters look across the net. Everybody else watches the ball -
+   but a volleyball player does not turn their back on the net to do it. You
+   move so the ball is in FRONT of you and play it facing the other side, and
+   a ball that is already behind you is played over your shoulder, still
+   facing forward. Letting the body spin all the way round is what made a
+   passer look like they were receiving into their own back row. */
 function facePoint(pose, p, ball){
+  const fwd = p[1] >= 0 ? -1 : 1;                 // the way this player faces
   if(pose === 'block' || pose === 'blockload' || pose === 'swing' || pose === 'cock'
      || pose === 'load' || pose === 'follow' || pose === 'serve' || pose === 'approach')
-    return [p[0], p[1] > 0 ? -6 : 6];
-  return [ball[0], ball[1]];
+    return [p[0], p[1] + 6*fwd];
+  const ahead = p[1] + 1.2*fwd;                   // never look behind this line
+  return [ball[0], fwd < 0 ? Math.min(ball[1], ahead) : Math.max(ball[1], ahead)];
 }
 
 /* =============== scene =============== */
@@ -716,7 +744,9 @@ canvas.addEventListener('pointermove', e=>{
         rebuildSteps();
       }
     } else if(pt){
-      ui.overrides[drag.player] = pt; simFrames = null; refreshMoved();
+      /* a dragged blocker is a real blocker, so the whole rally is rebuilt
+         around them rather than only the bodies being moved */
+      ui.overrides[drag.player] = pt; refreshMoved(); rebuildSteps();
     }
   } else {
     camTween = null;
@@ -1026,28 +1056,50 @@ openRays.visible = false; openRays.renderOrder = 5; scene.add(openRays);
    spots a straight swing can still find: inside the antennae, high enough to
    clear the net, and not passing through the blockers' hands. That leaves up
    to two lit strips, one either side of the block. */
-function openBands(ax, ay, az, bx0, bx1){
-  const A = {l:[], r:[]}, B = {l:[], r:[]};
-  const N = 46;
+function openBands(ax, ay, az, walls){
+  const N = 46, slices = [];
   for(let i=0;i<=N;i++){
     const cy = .25 + (HALF_L - .25)*i/N;
     const t = (0 - ay)/(cy - ay);
-    const zn = az*(1 - t);
+    if(!(t > 0 && t < 1)) continue;
+    const zn = az + (.45 - az)*t;                  // height as it crosses the net
     if(zn < NET_H) continue;                       // too sharp to clear the net
     let a1 = ax + (-HALF_W-ax)/t, a2 = ax + (HALF_W-ax)/t;
     if(a1 > a2){ const q=a1; a1=a2; a2=q; }
     a1 = Math.max(a1, -HALF_W); a2 = Math.min(a2, HALF_W);
     if(a2 - a1 < .02) continue;
-    if(zn <= HAND_H){
-      let b1 = ax + (bx0-ax)/t, b2 = ax + (bx1-ax)/t;
-      if(b1 > b2){ const q=b1; b1=b2; b2=q; }
-      if(b1 > a1 + .02){ A.l.push([a1,cy]); A.r.push([Math.min(b1,a2),cy]); }
-      if(b2 < a2 - .02){ B.l.push([Math.max(b2,a1),cy]); B.r.push([a2,cy]); }
-    } else {
-      A.l.push([a1,cy]); A.r.push([a2,cy]);         // clean over the top
+    /* each pair of hands denies its own strip, and only while the ball is
+       crossing below it - so two blockers a metre apart leave a seam, and a
+       blocker who never left the floor denies nothing at all */
+    const deny = [];
+    for(const b of (walls || [])){
+      if(zn > b.reach) continue;
+      let l = ax + (b.x - HAND_HALF - ax)/t, r = ax + (b.x + HAND_HALF - ax)/t;
+      if(l > r){ const q=l; l=r; r=q; }
+      deny.push([l, r]);
     }
+    deny.sort((u,v) => u[0] - v[0]);
+    const strips = [];
+    let x = a1;
+    for(const d of deny){
+      if(d[0] > x + .02) strips.push([x, Math.min(d[0], a2)]);
+      x = Math.max(x, d[1]);
+      if(x >= a2) break;
+    }
+    if(x < a2 - .02) strips.push([x, a2]);
+    slices.push({cy, strips});
   }
-  return [A,B].filter(b => b.l.length > 1);
+  /* stitch the slices into continuous bands; when the number of strips
+     changes the old bands are closed off and new ones started */
+  const bands = [];
+  let open = [];
+  const flush = ()=>{ for(const b of open) if(b.l.length > 1) bands.push(b); };
+  for(const sl of slices){
+    if(open.length !== sl.strips.length){ flush(); open = sl.strips.map(()=>({l:[], r:[]})); }
+    sl.strips.forEach((q,i)=>{ open[i].l.push([q[0], sl.cy]); open[i].r.push([q[1], sl.cy]); });
+  }
+  flush();
+  return bands;
 }
 
 let openInfoCache = null, openBaseOpacity = .34;
@@ -1060,7 +1112,7 @@ function drawOpen(info, fade){
   openEdge.material.opacity = .85 * f;
   openRays.material.opacity = .50 * f;
   openInfoCache = info;
-  const bands = openBands(info[0], info[1], info[2], info[3], info[4]);
+  const bands = openBands(info.ax, info.ay, info.az, info.walls);
   const pos = [], edge = [];
   for(const b of bands){
     for(let i=0;i<b.l.length-1;i++){
@@ -1074,11 +1126,11 @@ function drawOpen(info, fade){
     edge.push(b.l[0][0],.035,b.l[0][1], b.r[0][0],.035,b.r[0][1]);
     edge.push(b.l[e][0],.035,b.l[e][1], b.r[e][0],.035,b.r[e][1]);
   }
-  const rays = [info[0], info[2], info[1],  info[0], 0, info[1]];
+  const rays = [info.ax, info.az, info.ay,  info.ax, 0, info.ay];
   for(const b of bands){
     const e = b.l.length-1;
     for(const q of [b.l[0], b.r[0], b.l[e], b.r[e]]){
-      rays.push(info[0], info[2], info[1],  q[0], .03, q[1]);
+      rays.push(info.ax, info.az, info.ay,  q[0], .03, q[1]);
     }
   }
   openRays.geometry.dispose();
@@ -1100,14 +1152,14 @@ function drawOpen(info, fade){
 /* true when the block covers this spot, so only a tip or a deflection gets there */
 function behindBlock(pt, info){
   if(!info) return false;
-  const ax=info[0], ay=info[1], az=info[2], bx0=info[3], bx1=info[4];
-  const t = (0 - ay)/(pt[1] - ay);
+  const t = (0 - info.ay)/(pt[1] - info.ay);
   if(t <= 0) return false;
-  const zn = az*(1 - t);
+  const zn = info.az + (.45 - info.az)*t;
   if(zn < NET_H) return true;                      // too short for any hard swing
-  if(zn > HAND_H) return false;
-  const xn = ax + t*(pt[0] - ax);
-  return xn >= bx0 && xn <= bx1;
+  const xn = info.ax + t*(pt[0] - info.ax);
+  for(const b of (info.walls || []))
+    if(zn <= b.reach && xn >= b.x - HAND_HALF && xn <= b.x + HAND_HALF) return true;
+  return false;
 }
 
 /* --- probe marker (click the floor) --- */
@@ -1480,8 +1532,8 @@ function defShape(ctx, hitX){
   const px = clamp(hitX - .45*sgn, -4.1, 4.1);
   const mx = clamp(px - .9*sgn, -4.1, 4.1);
   const out = {...S};
-  if(out[pinZone]) out[pinZone] = {...out[pinZone], p:[px,.5], pose:'block', jump:.62};
-  if(out[midZone]) out[midZone] = {...out[midZone], p:[mx,.5], pose:'block', jump:.58};
+  if(out[pinZone]) out[pinZone] = {...out[pinZone], p:[px,.5], pose:'block', jump:ui.block.ourJ};
+  if(out[midZone]) out[midZone] = {...out[midZone], p:[mx,.5], pose:'block', jump:ui.block.ourJ*.94};
   return {zones:out, blockers:[pinZone, midZone]};
 }
 
@@ -1600,11 +1652,34 @@ const SETS = [
 ];
 function setCall(){ return SETS.find(c => c.id === ui.set) || SETS[0]; }
 
-/* How high their hands actually get. A blocker needs about three quarters of
-   a second to read, load and reach full extension; inside that they are still
-   on the way up, and a ball over late hands is how a quick scores. */
-function blockReach(tempo){
-  return HAND_H - clamp((.75 - tempo)*1.6, 0, 1.1);
+/* =============== how high a pair of hands gets ===============
+   Two numbers a coach actually knows - how tall the player is and how high
+   they jump - decide everything the block can do. Standing reach is about
+   1.3 times height, measured to the fingertips with the shoulder shrugged
+   up; the figure on screen is drawn to the hand and does not shrug, so its
+   hands sit a little under the line the ball is tested against. Everything
+   that follows - what the ball does, what the lit floor shows, and what the
+   panel says - is read off this one number. */
+const RIG_H = 1.83;                        // the drawn figure at scale 1
+const REACH_F = 1.30;                      // standing reach, as a share of height
+const HAND_HALF = .45;                     // a pair of hands is about 90 cm wide
+const bodyScale  = us => (us ? ui.block.ourH : ui.block.oppH)/RIG_H;
+const standReach = us => (us ? ui.block.ourH : ui.block.oppH)*REACH_F;
+/* A blocker needs about three quarters of a second to read, load and reach
+   full extension. Inside that they are still on the way up, and a ball over
+   late hands is how a quick scores. */
+function blockReach(us, jump, tempo){
+  return standReach(us) + (jump || 0)
+       - (tempo === undefined ? 0 : clamp((.75 - tempo)*1.6, 0, 1.1));
+}
+
+/* One pair of hands in the air at the net. A player who never left the floor,
+   or who has been dragged away from the net, is not a wall - which is why a
+   ball no longer gets blocked by nobody. */
+function netWall(id, p, jump, reach){
+  const q = ui.overrides[id] || p;
+  if((jump || 0) < .05 || Math.abs(q[1]) > 1.6) return null;
+  return {x:q[0], reach};
 }
 
 const oppBlock = (hitPt, tempo)=>{
@@ -1624,17 +1699,25 @@ const oppBlock = (hitPt, tempo)=>{
      and the pair of them must not be treated as a wall. */
   const joined = Math.abs(mx - px) < 1.6;
   const late = !joined || Math.abs(px - pWant) > .05 || Math.abs(mx - hWant) > .05;
+  const jP = ui.block.oppJ, jM = ui.block.oppJ * (joined ? .92 : .5);
+  /* the pin blocker was already standing there, so their hands get all the
+     way up; the middle travelled, so against a fast set theirs do not. Drag
+     either of them and the wall moves with the body, which is the whole
+     point - a blocker you have put somewhere else is not in front of this
+     hitter any more. */
+  const walls = [netWall('OA', [px, -.5], jP, blockReach(false, jP)),
+                 netWall('OX', [mx, -.5], jM, blockReach(false, jM, tempo))].filter(Boolean);
+  const joinedNow = walls.length > 1 && Math.abs(walls[0].x - walls[1].x) < 1.6;
   /* players and metadata are kept apart on purpose: anything inside the
      player map is treated as a person to interpolate, and a stray key with
      no position takes the whole scene down with it. */
   return {
     players:{
       OS:{p:[clamp(-2.4*sgn, -4, 4), -2.9], pose:'ready'},
-      OA:{p:[px, -.5], pose:'block', jump:.6},
-      OX:{p:[mx, -.5], pose:'block', jump: joined ? .55 : .3}
+      OA:{p:[px, -.5], pose:'block', jump:jP},
+      OX:{p:[mx, -.5], pose:'block', jump:jM}
     },
-    xs: joined ? [px, mx] : [px, px],
-    joined, late
+    walls, joined:joinedNow, late
   };
 };
 
@@ -1646,28 +1729,44 @@ const oppBlock = (hitPt, tempo)=>{
    corridor, they get blocked, which is the whole point of a closed block and
    the reason the cover cup exists. This is the same geometry the lit floor is
    drawn from, so what the tool shows and what the ball does agree. */
-function aimShot(contact, blockXs, yLand, handH){
+function aimShot(contact, walls, yLand){
   const cx = contact[0], cy = contact[1], cz = contact[2];
   const t = (0 - cy)/(yLand - cy);
   const W = HALF_W - .4;
   if(!(t > 0 && t < 1)) return {x:clamp(cx, -W, W), blocked:false, shot:'line'};
   const zNet = cz + (.45 - cz)*t;
-  const reach = (handH === undefined) ? HAND_H : handH;
-  if(zNet > reach)                        // clean over the top of everybody
+  /* each blocker denies the strip of floor behind their own hands, and only
+     if the ball would cross the net below them */
+  const deny = [];
+  for(const b of (walls || [])){
+    if(zNet > b.reach) continue;
+    let l = cx + (b.x - HAND_HALF - cx)/t, r = cx + (b.x + HAND_HALF - cx)/t;
+    if(l > r){ const q=l; l=r; r=q; }
+    deny.push([l, r]);
+  }
+  if(!deny.length)                        // clean over the top, or nobody there
     return {x:clamp(-cx*.45, -W, W), blocked:false, shot:'over'};
-  const b0 = Math.min(...blockXs) - .33, b1 = Math.max(...blockXs) + .33;
-  /* landing spots whose ray passes outside the block's outer hands */
-  const edgeL = cx + (b0 - cx)/t;
-  const edgeR = cx + (b1 - cx)/t;
-  const gapL = [-W, Math.min(edgeL, W)];
-  const gapR = [Math.max(edgeR, -W), W];
-  const wL = Math.max(0, gapL[1]-gapL[0]), wR = Math.max(0, gapR[1]-gapR[0]);
-  if(wL < .5 && wR < .5)
-    return {x:clamp((edgeL+edgeR)/2, -W, W), blocked:true, shot:'blocked'};
-  const useL = wL >= wR;
-  const g = useL ? gapL : gapR;
-  return {x:clamp((g[0]+g[1])/2, -W, W), blocked:false,
-          shot:(useL === (cx < 0)) ? 'line' : 'cross'};
+  deny.sort((u,v) => u[0] - v[0]);
+  const gaps = [];
+  let x = -W;
+  for(const d of deny){
+    if(d[0] > x) gaps.push([x, Math.min(d[0], W)]);
+    x = Math.max(x, d[1]);
+    if(x >= W) break;
+  }
+  if(x < W) gaps.push([x, W]);
+  let best = null;
+  for(const g of gaps)
+    if(g[1]-g[0] >= .5 && (!best || g[1]-g[0] > best[1]-best[0])) best = g;
+  if(!best){
+    const hit = deny.reduce((u,v) =>
+      Math.abs((v[0]+v[1])/2 - cx) < Math.abs((u[0]+u[1])/2 - cx) ? v : u);
+    return {x:clamp((hit[0]+hit[1])/2, -W, W), blocked:true, shot:'blocked'};
+  }
+  const mid = (best[0]+best[1])/2;
+  const seam = best[0] > -W + .02 && best[1] < W - .02;
+  return {x:clamp(mid, -W, W), blocked:false,
+          shot: seam ? 'seam' : ((mid < 0) === (cx < 0) ? 'line' : 'cross')};
 }
 
 /* =============== one rally, built from the markers =============== */
@@ -1693,13 +1792,14 @@ function buildRally(ctx, kind, m){
     const st = m.setter, hit = m.hit;
     const D = defShape(ctx, hit[0]);
     const info = {blockers:D.blockers, att:'OA', az:3.2};
-    const ourBlockX = D.blockers.map(z => D.zones[z] && D.zones[z].p[0])
-                                .filter(v => typeof v === 'number');
-    const theirAim = aimShot([hit[0], hit[1], 3.2], ourBlockX, 5.2);
+    const ourWalls = D.blockers.map(z => D.zones[z]
+      && netWall(z, D.zones[z].p, D.zones[z].jump, blockReach(true, D.zones[z].jump)))
+      .filter(Boolean);
+    const theirAim = aimShot([hit[0], hit[1], 3.2], ourWalls, 5.2);
     /* a ball that cannot get round the block comes off the hands and drops
        short instead of carrying to the back of the court */
     const dig = theirAim.blocked
-      ? [clamp((Math.min(...ourBlockX)+Math.max(...ourBlockX))/2, -4.2, 4.2), 2.7]
+      ? [clamp(theirAim.x, -4.2, 4.2), 2.7]
       : [clamp(theirAim.x, -4.2, 4.2), 5.2];
     firstShape = D.zones; firstPt = dig;
     steps.push({t:0, phase:'Their setter has the ball',
@@ -1715,7 +1815,9 @@ function buildRally(ctx, kind, m){
     steps.push({t:2.35, phase:theirAim.blocked ? 'Off the block' : 'Dig',
       coach:theirAim.blocked
         ? 'Your block closed the corridor, so the ball came off the hands and dropped short instead of carrying. Somebody has to be in front of the block for exactly this ball.'
-        : 'They hit the ' + theirAim.shot + ' because that is the corridor your block left open, and it lands in the lit strip - which is where somebody should already be standing.',
+        : (ourWalls.length
+            ? 'They hit the ' + theirAim.shot + ' because that is the corridor your block left open, and it lands in the lit strip - which is where somebody should already be standing.'
+            : 'Nobody got a hand up, so the whole court is open and they hit wherever they liked. Drag a blocker in front of the hitter and watch the lit floor close.'),
       zones:D.zones, shadow:info, resp:true,
       opp:{...oppBase(), OA:{p:[...hit], pose:'swing', jump:.25}},
       ball:[dig[0], dig[1], .5]});
@@ -1756,8 +1858,10 @@ function buildRally(ctx, kind, m){
   const tempo = onCall ? call.tempo : 1.15;
   const contactZ = 3.4 - tempo*.35;         // a faster ball is hit lower
   const theirBlock = oppBlock(hitPt, tempo);
-  const ourAim = aimShot([hitPt[0], hitPt[1], contactZ], theirBlock.xs, -5.4,
-                         blockReach(tempo));
+  const ourAim = aimShot([hitPt[0], hitPt[1], contactZ], theirBlock.walls, -5.4);
+  /* hands somewhere along the net are not hands in front of THIS hitter, and
+     the panel should say which it is */
+  const facing = theirBlock.walls.filter(w => Math.abs(w.x - hitPt[0]) < 2.2).length;
   /* blocked means the ball comes straight back down on our own side, inside
      about three metres of the hitter - which is precisely where the cup is */
   const landOpp = ourAim.blocked
@@ -1809,11 +1913,16 @@ function buildRally(ctx, kind, m){
     opp:oppBase(), ballAt:setr.zone, ball:[TARGET[0], TARGET[1], 2.7], arc:1.3});
 
   steps.push({t:tHit, phase:'Our swing \u2014 ' + call.name,
-    coach:whyNot + call.note + (theirBlock.joined
-      ? (theirBlock.late
-         ? ' They got two hands there but only just, and the seam between them is still open.'
-         : ' They had time to close, so this is a clean two-man block.')
-      : ' Their second blocker never got across: you are hitting one pair of hands.'),
+    coach:whyNot + call.note + (
+      !facing
+        ? ' Nobody has a hand up in front of this hitter, so the whole court is open to them.'
+      : facing < 2
+        ? ' Only one pair of hands is in front of this hitter: you are hitting a single blocker.'
+      : !theirBlock.joined
+        ? ' Their two blockers never joined up, and the seam between them is the biggest hole on the court.'
+      : theirBlock.late
+        ? ' They got two hands there but only just, and the seam between them is still open.'
+        : ' They had time to close, so this is a clean two-man block.'),
     zones:shSwing,
     opp:theirBlock.players, ball:[hitPt[0], hitPt[1], contactZ], arc:1.0});
 
@@ -1878,6 +1987,7 @@ const ui = {
   },
   showOpen:true, showCov:false, showCross:true, showTrails:true, showLabels:true, focus:'',
   set:'4',
+  block:{ourH:1.88, ourJ:.62, oppH:1.92, oppJ:.65},
   overrides:{},
   playing:true, t:0, speed:1, view:'angle'
 };
@@ -2059,18 +2169,21 @@ function simStep(t, body, obody, dt){
   const target = {};
   for(const z of ZONES) if(w.zones[z]) target[z] = [...w.zones[z].p];
 
-  /* a defender adjusts in toward a ball dropping short of them */
+  /* Everybody adjusts to where the ball is coming down - in if it is dropping
+     short, BACK if it is going over their head. A passer wants to be a step
+     behind the ball and move forward into it, which is also what keeps them
+     facing the other side of the net instead of chasing it round. */
   if(w.landing && bp[2] > 1.2){
     for(const z of ZONES){
       const d = w.zones[z];
       if(!d || ui.overrides[z] || (d.jump||0) > .05) continue;
       if(d.pose === 'block' || d.pose === 'blockload' || /block/i.test(d.tag || '')) continue;
-      const ahead = target[z][1] - w.landing[1];
-      if(ahead <= .4) continue;
-      const dx = w.landing[0] - target[z][0];
-      const dist = Math.hypot(dx, ahead);
-      const step = Math.min(.45, ahead * .22);
-      target[z] = [target[z][0] + dx/dist*step, target[z][1] - ahead/dist*step];
+      const want = [w.landing[0], clamp(w.landing[1] + .55, .7, 8.7)];
+      const dx = want[0] - target[z][0], dy = want[1] - target[z][1];
+      const dist = Math.hypot(dx, dy);
+      if(dist < .35) continue;
+      const step = Math.min(.5, dist*.22);
+      target[z] = [target[z][0] + dx/dist*step, target[z][1] + dy/dist*step];
     }
   }
 
@@ -2099,7 +2212,7 @@ function simStep(t, body, obody, dt){
       /* going for it is a TARGET, not a teleport: they run at it and may be
          short when it lands */
       if(bp[2] < 1.9 && !ui.overrides[resp])
-        target[resp] = [bp[0], bp[1]];
+        target[resp] = [bp[0], clamp(bp[1] + .45, .6, 8.8)];
     }
   }
 
@@ -2171,12 +2284,19 @@ function simStep(t, body, obody, dt){
   if(a.shadow){
     const at = (src, k) => ui.overrides[k] ? ui.overrides[k]
                          : ((src || {})[k] ? (src || {})[k].p : null);
-    const xs = a.shadow.blockers
-      .map(z => at(a.zones, z) || (zones[z] && zones[z].p))
-      .filter(Boolean).map(q => q[0]);
+    /* the hands you can SEE are the hands that block: a blocker still
+       travelling never leaves the floor, so their jump is damped to nothing
+       and they darken no floor at all */
+    const walls = [];
+    for(const z of a.shadow.blockers){
+      const q = at(a.zones, z) || (zones[z] && zones[z].p);
+      if(!q || Math.abs(q[1]) > 1.6) continue;
+      const jmp = zones[z] ? (zones[z].jump || 0) : ((a.zones[z] || {}).jump || 0);
+      if(jmp < .05) continue;
+      walls.push({x:q[0], reach:blockReach(true, jmp)});
+    }
     const ap = at(a.opp, a.shadow.att) || (opp[a.shadow.att] && opp[a.shadow.att].p);
-    if(xs.length && ap)
-      shadow = [ap[0], ap[1], a.shadow.az, Math.min(...xs) - .33, Math.max(...xs) + .33];
+    if(ap) shadow = {ax:ap[0], ay:ap[1], az:a.shadow.az, walls};
   }
   const shadowFade = (a.shadow && !b.shadow) ? 1 - w.u : 1;
 
@@ -2211,9 +2331,10 @@ function sample(t){
 }
 
 /* --- drawing --- */
-function paintActor(a, cx, cy, h, pose, col, opacity, label, aim){
+function paintActor(a, cx, cy, h, pose, col, opacity, label, aim, sc){
   const f = a.fig;
   applyPose(f, pose);
+  f.root.scale.setScalar(sc || 1);
   f.root.position.set(cx, h, cy);
   const dx = aim[0]-cx, dz = aim[1]-cy;
   if(Math.hypot(dx, dz) > .3){            // too close to aim at, keep the last
@@ -2232,7 +2353,7 @@ function paintActor(a, cx, cy, h, pose, col, opacity, label, aim){
   a.pad.material.color.setHex(col);
   a.pad.material.opacity = .3*opacity;
   a.pad.visible = true;
-  const lblY = (pose === 'block' || pose === 'swing' || pose === 'serve') ? 2.95 : 2.35;
+  const lblY = ((pose === 'block' || pose === 'swing' || pose === 'serve') ? 2.95 : 2.35)*(sc || 1);
   a.label.position.set(cx, lblY + h, cy);
   a.label.visible = ui.showLabels && label;
   a.label.material.opacity = opacity;
@@ -2273,7 +2394,7 @@ function frame(dt){
     if(s.resp === z && !focus) col = COL.focus;
     const pose = livePose(d.pose, z, d, s, a, dt);
     paintActor(a, d.p[0], d.p[1], d.jump||0, pose, col, op, true,
-               facePoint(pose, d.p, s.ball));
+               facePoint(pose, d.p, s.ball), bodyScale(true));
     a.last = [d.p[0], d.p[1]];
     if(s.resp === z) respContact = handPoint(a.fig, pose);
     else if(!setContact && pose === 'set') setContact = handPoint(a.fig, pose);
@@ -2304,7 +2425,7 @@ function frame(dt){
     const d = s.opp[id], a = oppActors[id];
     if(!d){ a.fig.root.visible = false; a.pad.visible = false; a.label.visible = false; a.ring.visible = false; a.trail.visible = false; continue; }
     paintActor(a, d.p[0], d.p[1], d.jump||0, d.pose, COL.opp, focus ? .45 : 1, false,
-               facePoint(d.pose, d.p, s.ball));
+               facePoint(d.pose, d.p, s.ball), bodyScale(false));
     if(d.pose === 'swing' && !respContact) respContact = handPoint(a.fig, 'swing');
     a.ring.visible = false; a.trail.visible = false;
   }
@@ -2559,6 +2680,35 @@ for(const c of SETS){
 }
 paintSetNote();
 
+/* Height and jump are the two numbers a coach actually knows about a player,
+   and between them they decide everything the block can do. */
+const rngBind = [];
+function paintBlockNote(){
+  const o = standReach(true) + ui.block.ourJ, t = standReach(false) + ui.block.oppJ;
+  const over = v => Math.round((v - NET_H)*100);
+  document.getElementById('blockNote').textContent =
+    'Your hands reach ' + o.toFixed(2) + ' m, ' + over(o) + ' cm over the tape; theirs ' +
+    t.toFixed(2) + ' m, ' + over(t) + ' cm. A ball crossing the net below a pair of hands ' +
+    'and inside them is blocked \u2014 and nothing else is.';
+}
+function bindRange(id, key, fmt){
+  const el = document.getElementById(id), out = document.getElementById(id + 'v');
+  const paint = ()=>{ el.value = Math.round(ui.block[key]*100); out.textContent = fmt(ui.block[key]); };
+  el.addEventListener('input', e=>{
+    ui.block[key] = +e.target.value/100;
+    out.textContent = fmt(ui.block[key]);
+    paintBlockNote();
+    rebuildSteps();
+  });
+  rngBind.push(paint);
+  paint();
+}
+bindRange('ourH', 'ourH', v => v.toFixed(2) + ' m');
+bindRange('ourJ', 'ourJ', v => Math.round(v*100) + ' cm');
+bindRange('oppH', 'oppH', v => v.toFixed(2) + ' m');
+bindRange('oppJ', 'oppJ', v => Math.round(v*100) + ' cm');
+paintBlockNote();
+
 document.getElementById('shareBtn').addEventListener('click', async e=>{
   const btn = e.currentTarget;
   const url = location.origin + location.pathname + '?s=' + stateToHash();
@@ -2583,6 +2733,8 @@ addEventListener('keydown', e=>{
 const r1 = v => Math.round(v*10)/10;
 function stateToHash(){
   const o = {s:ui.scenario, r:ui.rotation, y:ui.system, l:ui.libero ? 1 : 0, c:ui.set,
+             b:[ui.block.ourH, ui.block.ourJ, ui.block.oppH, ui.block.oppJ]
+                 .map(v => Math.round(v*100)),
              m:Object.values(ui.marks[ui.scenario]).map(q => [r1(q[0]), r1(q[1])])};
   const ov = {};
   for(const k in ui.overrides) ov[k] = [r1(ui.overrides[k][0]), r1(ui.overrides[k][1])];
@@ -2599,6 +2751,8 @@ function syncControls(){
   for(const b of document.querySelectorAll('#scnList button'))
     b.setAttribute('aria-pressed', String(b.dataset.id === ui.scenario));
   document.getElementById('libero').checked = ui.libero;
+  for(const f of rngBind) f();
+  paintBlockNote();
 }
 let pendingOverrides = null;
 function readHash(){
@@ -2610,6 +2764,11 @@ function readHash(){
     if(o.r >= 1 && o.r <= 6) ui.rotation = o.r;
     if(o.y === 'perimeter' || o.y === 'rotational') ui.system = o.y;
     if(o.c && SETS.some(c => c.id === o.c)) ui.set = o.c;
+    if(Array.isArray(o.b) && o.b.length === 4)
+      ['ourH','ourJ','oppH','oppJ'].forEach((k,i)=>{
+        const v = o.b[i]/100;
+        if(v > .1 && v < 2.2) ui.block[k] = v;
+      });
     ui.libero = !!o.l;
     const keys = Object.keys(ui.marks[ui.scenario] || {});
     if(Array.isArray(o.m)) o.m.forEach((q2,i)=>{
@@ -2643,6 +2802,7 @@ if(pendingOverrides){
   ui.overrides = pendingOverrides;
   pendingOverrides = null;
   refreshMoved();
+  rebuildSteps();          // the people in the link are blockers too
 }
 setView(ui.view || 'angle');
 resize();

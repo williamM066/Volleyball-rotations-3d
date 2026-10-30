@@ -133,21 +133,46 @@ court, run over a grid. The seams you can see are the seams the tool would
 actually name, and they move as you drag people. This is what turns a
 defensive shape from six dots into an argument.
 
-**The block is real.** A hitter does not swing at a fixed spot regardless of
-who is in front of them. `aimShot()` casts rays from the contact point past
-the block's outer hands: anything crossing the net inside those hands and
-below them is blocked, so the hitter takes the widest corridor the block has
-left, and the coaching note names which one. Consequences that fall out of the
-geometry rather than being written down:
+**The block is real, and it is one pair of hands at a time.** A hitter does
+not swing at a fixed spot regardless of who is in front of them. Every blocker
+who is **in the air at the net** is a wall 90 cm wide reaching a specific
+height. `aimShot()` maps each wall out to the strip of floor it denies,
+subtracts those strips from the court, and the hitter takes the widest
+corridor left. The coaching note names which one. Consequences that fall out
+of the geometry rather than being written down:
 
 - Block set inside, taking the angle -> the hitter goes **line**.
 - Block slid to the line -> the hitter goes **cross**.
-- A wide or closed block, or a tight set where the contact is low -> **blocked**,
-  and the ball comes straight back down inside three metres of the hitter,
-  which is exactly where the cover cup is standing.
+- Two blockers who never joined up -> the hitter goes at the **seam** between
+  them.
+- A closed block, or a tight set where the contact is low -> **blocked**, and
+  the ball comes straight back down inside three metres of the hitter, which
+  is exactly where the cover cup is standing.
+
+Three things follow from treating blockers one at a time instead of as a span
+between the outermost two:
+
+- **Nobody there, nothing blocked.** Two blockers 3 m apart used to deny
+  everything between them, so a ball could be blocked by thin air. Now each
+  denies only its own strip.
+- **A blocker you drag is a blocker.** Put somebody in front of the hitter and
+  the ball stops; drag them away and it flies past. Dragging a player rebuilds
+  the whole rally, not just the bodies, so the ball responds to where people
+  actually are. Shared links restore this too.
+- **Hands down means no block.** A blocker who is still travelling never
+  leaves the floor, and reach is standing reach *plus the jump they actually
+  got*. No jump, no wall.
+
+**Height and jump are yours to set.** The Block panel has four sliders: our
+height and jump, and theirs. Standing reach is 1.3 x height (fingertips,
+shoulder shrugged), plus the jump, and the readout tells you how far over the
+tape that puts each team's hands. Those numbers drive everything at once - the
+size of the figures on screen, what the ball does, what the lit floor shows,
+and what the panel says. Drop your jump to 25 cm and a swing that was being
+dug now goes straight over the block; raise it and the corridor closes.
 
 It is the same geometry the lit floor is drawn from, so what the tool shows
-and what the ball does now agree. Before this, the ball flew through the
+and what the ball does agree. Before any of this the ball flew through the
 block: it crossed the net at x = -2.36 and 2.75 m, straight through hands
 spanning [-3.23, -1.67] that reach 3.15 m.
 
@@ -206,18 +231,17 @@ Bodies ease between poses rather than snapping — except on a scrub or a
 scenario change, where there is no movement to show and they snap instead.
 
 **Area to defend** — the lit floor is computed, not drawn: rays from the
-attacker's contact point past the blockers' outer edges, projected down to the
+attacker's contact point past each blocker's hands, projected down to the
 court, and drawn back to that contact point so it reads as something coming out
-of the smash. Whatever the block covers goes dark; what stays lit is every spot
-a hard swing can still reach, which is exactly where the back row has to be
-standing. It reaches forward into the 3 m zone, because the contact point is
-modelled close to the net.
+of the smash. Every pair of hands darkens its own strip; what stays lit is
+every spot a hard swing can still reach, which is exactly where the back row
+has to be standing. Two blockers who are apart leave a lit seam between them,
+and a court with nobody in the air is lit end to end.
 
-Three constants drive it, at the top of the script and in each defensive
-scenario: `NET_H` (2.43 m), `HAND_H` (how high the blockers' hands reach over
-the net, 3.15 m), and the attacker's contact point `A = [x, y, height]`. Lower
-`HAND_H` or raise the contact and more of the deep court lights up, because the
-ball starts clearing the block. It assumes a closed block and a straight swing,
+What drives it: `NET_H` (2.43 m), each blocker's own reach (height x 1.3 plus
+the jump they got), and the attacker's contact point `A = [x, y, height]`.
+Lower the jump sliders or raise the contact and more of the deep court lights
+up, because the ball starts clearing the block. It assumes a straight swing,
 so treat it as the geometry of a well-formed block rather than a prediction.
 
 **Defence to offence** — the transition sequence, which is where most rallies
@@ -270,8 +294,9 @@ from the net (`0`) to the endline (`9`). The attack line is at `y = 3`.
 
 ## Known simplifications
 
-- Serve-receive formations are generic rather than per-rotation, and do not
-  enforce overlap rules.
+- Serve receive is placed per rotation and then run through `legalise()`,
+  which nudges the shape until every overlap rule holds. That line used to say
+  the opposite; it no longer does.
 - Players are articulated 3D bodies built from capsules: hips, spine, head,
   two arms and two legs, each a real joint. A pose is a set of joint angles
   (`POSES3`), and the whole figure turns to face the ball, so a dig platform
@@ -282,6 +307,15 @@ from the net (`0`) to the endline (`9`). The attack line is at `y = 3`.
   hangs down at 0, and `rotation.x` swings it **forward** (`PI` points it
   straight up). The spine is the opposite: its offset points up, so a positive
   `chest` rotation leans the body **backward** and forward lean is negative.
+- Receiving is done facing the other side of the net. A player moves so the
+  ball is in front of them — the target is half a metre behind where it is
+  coming down, and everybody adjusts in or back toward it — and `facePoint()`
+  never lets a body turn past 1.2 m in front of itself. A ball that is already
+  behind you is played over your shoulder, still facing forward, instead of
+  the figure spinning round to receive into its own back row.
+- The figure is drawn to the hand and does not shrug its shoulders, so its
+  hands sit something like 20 cm under the reach line the ball is tested
+  against. That gap is the fingers and the shrug, which are not drawn.
 - A defender covers about two metres to a ball already on its way down. If
   the nearest player is further than that when it lands, the panel says
   "Nobody reaches this — it drops" instead of naming a digger who never
