@@ -652,7 +652,7 @@ canvas.addEventListener('pointermove', e=>{
         rebuildSteps();
       }
     } else if(pt){
-      ui.overrides[drag.player] = pt; refreshMoved();
+      ui.overrides[drag.player] = pt; simFrames = null; refreshMoved();
     }
   } else {
     orbit.theta -= dx * .006;
@@ -1600,6 +1600,7 @@ let steps = [], duration = 1, ctx = null, probePoint = null;
 /* Regenerate the rally from the current markers. Cheap enough to run on every
    pointer move while a marker is being dragged. */
 function rebuildSteps(){
+  simFrames = null;
   const sc = SCENARIOS.find(s => s.id === ui.scenario);
   steps = sc.build(ctx, ui.marks[ui.scenario]);
   duration = steps[steps.length-1].t + .9;
@@ -1663,7 +1664,11 @@ function refreshFocusList(){
 }
 
 /* --- timeline sampling --- */
-function sample(t){
+/* =============== what the scenario wants ===============
+   Pure keyframe reading: where the rally would LIKE everybody to be at time
+   t, with no regard for whether a human could get there. Nothing here moves
+   anybody; it only states the intent. */
+function intent(t){
   let i = 0;
   while(i < steps.length-1 && steps[i+1].t <= t) i++;
   const a = steps[i], b = steps[Math.min(i+1, steps.length-1)];
@@ -1695,22 +1700,145 @@ function sample(t){
       pose:s0.pose || 'ready', poseNext:s1.pose || s0.pose || 'ready'
     };
   }
-  /* anyone the user has dragged stays where they were put */
-  for(const k in ui.overrides){
-    if(zones[k]) zones[k] = {...zones[k], p:[...ui.overrides[k]]};
-    else if(opp[k]) opp[k] = {...opp[k], p:[...ui.overrides[k]]};
+
+  /* Anchor each end of the flight to where that player stands AT THAT STEP,
+     not where they happen to be now, or the ball's own path slides around
+     while it is still in the air. A drag still moves it. */
+  const anchorAt = (st)=>{
+    if(!st.ballAt) return null;
+    if(ui.overrides[st.ballAt]) return [...ui.overrides[st.ballAt]];
+    const r = (st.zones || {})[st.ballAt];
+    return r ? [...r.p] : null;
+  };
+  const ba = anchorAt(a) || a.ball, bb = anchorAt(b) || b.ball;
+  let bz = a.ball[2] + (b.ball[2]-a.ball[2])*u;
+  if(b.arc) bz += b.arc * Math.sin(Math.PI*u);
+  const bp = [ba[0] + (bb[0]-ba[0])*u, ba[1] + (bb[1]-ba[1])*u, bz];
+
+  for(const z in zones) zones[z] = motion(zones[z], u, bp[2], span);
+  for(const id in opp)  opp[id]  = motion(opp[id],  u, bp[2], span);
+
+  let landing = null;
+  for(let k=i+1; k<Math.min(steps.length, i+3); k++){
+    if(steps[k].ball[2] <= .8){ landing = [steps[k].ball[0], steps[k].ball[1]]; break; }
+  }
+  return {zones, opp, ball:bp, step:a, next:b, u, span, landing};
+}
+
+/* =============== how a body actually gets there ===============
+   Players do not teleport between the positions a scenario asks for. They
+   accelerate, run or shuffle at a speed a human can manage, brake into the
+   spot, and have to be planted on the floor before they can jump. If the
+   rally does not give them enough time, they simply do not arrive - and a
+   block that does not arrive is the most useful thing this tool can show. */
+const GAIT = {
+  run:     4.6,   // transitioning off the net, chasing a ball down
+  shuffle: 2.5,   // sideways along the net: blockers never cross over at speed
+  back:    2.8,   // backpedalling
+  accel:   8.5    // m/s^2, so starts and stops take real time
+};
+const SIM_DT = 1/60;
+let simFrames = null;
+
+function gaitFor(w, from, to){
+  const blocking = w && (w.pose === 'block' || w.pose === 'blockload'
+                         || /block/i.test(w.tag || ''));
+  if(blocking && from[1] < 1.9 && to[1] < 1.9) return GAIT.shuffle;
+  if(to[1] > from[1] + .25) return GAIT.back;
+  return GAIT.run;
+}
+
+/* steer toward a target, braking so as to arrive rather than overshoot */
+function stepBody(st, target, maxV, dt){
+  const dx = target[0]-st.p[0], dy = target[1]-st.p[1];
+  const dist = Math.hypot(dx, dy);
+  let wx = 0, wy = 0;
+  if(dist > 1e-4){
+    const v = Math.min(maxV, Math.sqrt(2*GAIT.accel*dist));
+    wx = dx/dist*v; wy = dy/dist*v;
+  }
+  const ax = wx-st.v[0], ay = wy-st.v[1];
+  const am = Math.hypot(ax, ay), lim = GAIT.accel*dt;
+  if(am > lim){ st.v[0] += ax/am*lim; st.v[1] += ay/am*lim; }
+  else { st.v[0] = wx; st.v[1] = wy; }
+  st.p[0] += st.v[0]*dt; st.p[1] += st.v[1]*dt;
+}
+
+function simStep(t, body, obody, dt){
+  const w = intent(t);
+  const bp = w.ball;
+
+  /* ---- decide where everyone is trying to be this instant ---- */
+  const target = {};
+  for(const z of ZONES) if(w.zones[z]) target[z] = [...w.zones[z].p];
+
+  /* a defender adjusts in toward a ball dropping short of them */
+  if(w.landing && bp[2] > 1.2){
+    for(const z of ZONES){
+      const d = w.zones[z];
+      if(!d || ui.overrides[z] || (d.jump||0) > .05) continue;
+      if(d.pose === 'block' || d.pose === 'blockload' || /block/i.test(d.tag || '')) continue;
+      const ahead = target[z][1] - w.landing[1];
+      if(ahead <= .4) continue;
+      const dx = w.landing[0] - target[z][0];
+      const dist = Math.hypot(dx, ahead);
+      const step = Math.min(.45, ahead * .22);
+      target[z] = [target[z][0] + dx/dist*step, target[z][1] - ahead/dist*step];
+    }
   }
 
-  /* Two people cannot stand in the same place. A few relaxation passes push
-     anyone who ends up overlapping apart; a player the user has placed by hand
-     is treated as immovable, so only the other one gives way. */
+  /* ---- who is going for this ball, judged from where bodies really are ---- */
+  let resp = null, respOk = true;
+  if(!w.step.resp) lastResp = null;
+  if(w.step.resp){
+    const setup = {};
+    for(const z of ZONES)
+      if(body[z]) setup[z] = {p:body[z].p, pose:w.zones[z] ? w.zones[z].pose : 'ready',
+                              tag:(w.zones[z] && w.zones[z].tag) || ''};
+    const pick = whoTakes([bp[0], bp[1]], setup);
+    /* stay with whoever had it unless somebody is clearly better placed, so
+       the ball does not flicker between two pairs of hands */
+    if(lastResp && lastResp !== pick && setup[lastResp] && setup[pick]){
+      const dOld = Math.hypot(bp[0]-setup[lastResp].p[0], bp[1]-setup[lastResp].p[1]);
+      const dNew = Math.hypot(bp[0]-setup[pick].p[0],     bp[1]-setup[pick].p[1]);
+      resp = dNew < dOld*.82 ? pick : lastResp;
+    } else resp = pick;
+    lastResp = resp;
+    if(body[resp]){
+      const dist = Math.hypot(bp[0]-body[resp].p[0], bp[1]-body[resp].p[1]);
+      /* about two metres is what a defender covers to a ball already on its
+         way down; further than that and it genuinely drops */
+      respOk = bp[2] >= 1.2 || dist <= 1.9;
+      /* going for it is a TARGET, not a teleport: they run at it and may be
+         short when it lands */
+      if(bp[2] < 1.9 && !ui.overrides[resp])
+        target[resp] = [bp[0], bp[1]];
+    }
+  }
+
+  /* ---- move the bodies ---- */
+  const drive = (st, want, wz)=>{
+    const to = want || st.p;
+    stepBody(st, to, gaitFor(wz, st.p, to), dt);
+  };
+  for(const z of ZONES){
+    if(!body[z]) continue;
+    if(ui.overrides[z]){ body[z].p = [...ui.overrides[z]]; body[z].v = [0,0]; continue; }
+    drive(body[z], target[z], w.zones[z]);
+  }
+  for(const id in obody){
+    if(ui.overrides[id]){ obody[id].p = [...ui.overrides[id]]; obody[id].v = [0,0]; continue; }
+    drive(obody[id], w.opp[id] && w.opp[id].p, w.opp[id]);
+  }
+
+  /* ---- two people cannot stand in the same place ---- */
   const MIN_GAP = 1.15;
   for(let pass=0; pass<3; pass++){
     for(let m=0; m<ZONES.length; m++){
       for(let n=m+1; n<ZONES.length; n++){
-        const za = zones[ZONES[m]], zb = zones[ZONES[n]];
-        if(!za || !zb) continue;
-        let dx = zb.p[0]-za.p[0], dy = zb.p[1]-za.p[1];
+        const A = body[ZONES[m]], B = body[ZONES[n]];
+        if(!A || !B) continue;
+        let dx = B.p[0]-A.p[0], dy = B.p[1]-A.p[1];
         let d = Math.hypot(dx, dy);
         if(d >= MIN_GAP) continue;
         if(d < 1e-4){ dx = (m%2 ? 1 : -1); dy = .01; d = 1; }
@@ -1720,112 +1848,38 @@ function sample(t){
         const gap = MIN_GAP - d;
         const sa = pinA ? 0 : (pinB ? gap : gap/2);
         const sb = pinB ? 0 : (pinA ? gap : gap/2);
-        if(sa) zones[ZONES[m]] = {...za, p:[za.p[0]-dx*sa, za.p[1]-dy*sa]};
-        if(sb) zones[ZONES[n]] = {...zb, p:[zb.p[0]+dx*sb, zb.p[1]+dy*sb]};
+        A.p[0] -= dx*sa; A.p[1] -= dy*sa;
+        B.p[0] += dx*sb; B.p[1] += dy*sb;
       }
     }
   }
 
-  /* The ball goes where the people are. A step can anchor it to a player, so
-     a setter who has been dragged to the back row sets from the back row
-     instead of from the spot the scenario was written around. */
-  /* Anchor each end of the flight to where that player stands AT THAT STEP,
-     not to where they happen to be right now. Using the live position for
-     both ends meant the ball's own start and finish slid around while it was
-     still in the air, which is what made the flight look broken. A drag still
-     moves it, because an override counts as that step's position. */
-  const anchorAt = (st)=>{
-    if(!st.ballAt) return null;
-    if(ui.overrides[st.ballAt]) return [...ui.overrides[st.ballAt]];
-    const r = (st.zones || {})[st.ballAt];
-    if(r) return [...r.p];
-    return zones[st.ballAt] ? [...zones[st.ballAt].p] : null;
-  };
-  const ba = anchorAt(a) || a.ball, bb = anchorAt(b) || b.ball;
-  let bz = a.ball[2] + (b.ball[2]-a.ball[2])*u;
-  if(b.arc) bz += b.arc * Math.sin(Math.PI*u);
-  const bp = [ba[0] + (bb[0]-ba[0])*u, ba[1] + (bb[1]-ba[1])*u, bz];
-
-  /* Now that the ball height is known, turn the keyframe poses into actual
-     movement: plants, jumps that start from the floor, blocks that land. */
-  for(const z in zones) zones[z] = motion(zones[z], u, bp[2], span);
-  for(const id in opp)  opp[id]  = motion(opp[id],  u, bp[2], span);
-
-  /* look a step or two ahead for the next time the ball reaches the floor,
-     so the cross can mark the landing spot while it is still in the air */
-  let landing = null;
-  for(let k=i+1; k<Math.min(steps.length, i+3); k++){
-    if(steps[k].ball[2] <= .8){ landing = [steps[k].ball[0], steps[k].ball[1]]; break; }
+  /* ---- assemble the frame ---- */
+  const settle = sp => clamp(1 - (sp - .5)/1.6, 0, 1);
+  const zones = {}, opp = {};
+  for(const z of ZONES){
+    const wz = w.zones[z];
+    if(!wz || !body[z]) continue;
+    const sp = Math.hypot(body[z].v[0], body[z].v[1]);
+    let pose = wz.pose, jump = wz.jump || 0;
+    /* you cannot leave the floor while you are still travelling, so a blocker
+       who is late is caught mid-shuffle with their hands down */
+    if(jump > 0) jump *= settle(sp);
+    if(pose === 'ready' && sp > 2.3) pose = 'run';
+    zones[z] = {...wz, p:[body[z].p[0], body[z].p[1]], jump, pose, speed:sp};
+  }
+  for(const id in obody){
+    const wo = w.opp[id];
+    if(!wo) continue;
+    const sp = Math.hypot(obody[id].v[0], obody[id].v[1]);
+    let pose = wo.pose, jump = wo.jump || 0;
+    if(jump > 0) jump *= settle(sp);
+    if(pose === 'ready' && sp > 2.3) pose = 'run';
+    opp[id] = {...wo, p:[obody[id].p[0], obody[id].p[1]], jump, pose, speed:sp};
   }
 
-  /* Defenders do not stand rooted while a ball drops in front of them. If it
-     is coming down shorter than where they are standing, they step in to meet
-     it. Small on purpose: it should read as adjusting, not as abandoning the
-     position the scenario is teaching. */
-  if(landing && bp[2] > 1.2){
-    for(const z of ZONES){
-      const d = zones[z];
-      if(!d || ui.overrides[z] || (d.jump||0) > .05) continue;
-      if(d.pose === 'block' || d.pose === 'blockload' || /block/i.test(d.tag || '')) continue;
-      const ahead = d.p[1] - landing[1];          // > 0: the ball lands in front
-      if(ahead <= .4) continue;
-      const dx = landing[0] - d.p[0];
-      const dist = Math.hypot(dx, ahead);
-      const step = Math.min(.45, ahead * .22);
-      zones[z] = {...d, p:[d.p[0] + dx/dist*step, d.p[1] - ahead/dist*step]};
-    }
-  }
-
-  /* Who plays this ball is decided from where everyone actually is, not from
-     a name written into the scenario. Move them toward it, but only as far as
-     a player could really cover - if it is out of reach it drops, which is the
-     whole point of the perimeter-versus-middle-up comparison. */
-  let resp = null, respOk = true;
-  if(!a.resp) lastResp = null;
-  if(a.resp){
-    const setup = {};
-    for(const z of ZONES){
-      const d = zones[z];
-      if(d) setup[z] = {p:d.p, pose:d.pose, tag:d.tag || ''};
-    }
-    const pick = whoTakes([bp[0], bp[1]], setup);
-    /* Two players who are nearly tied can swap responsibility frame to frame,
-       and the ball snaps to whichever one holds it - so it flickers between
-       two pairs of hands. Stay with whoever had it unless somebody is clearly
-       better placed. */
-    if(lastResp && lastResp !== pick && setup[lastResp] && setup[pick]){
-      const dOld = Math.hypot(bp[0]-setup[lastResp].p[0], bp[1]-setup[lastResp].p[1]);
-      const dNew = Math.hypot(bp[0]-setup[pick].p[0],     bp[1]-setup[pick].p[1]);
-      resp = dNew < dOld*.82 ? pick : lastResp;
-    } else resp = pick;
-    lastResp = resp;
-    const d = zones[resp];
-    if(d){
-      const dx = bp[0]-d.p[0], dy = bp[1]-d.p[1];
-      const dist = Math.hypot(dx, dy);
-      /* A defender covers about two metres to a ball already on its way down.
-         Further than that and they genuinely do not get there - which is the
-         whole point of comparing one defensive shape against another, so the
-         engine has to be willing to say the ball dropped. */
-      respOk = bp[2] >= 1.2 || dist <= 1.9;
-      /* Move to meet the ball only while it is still low enough to play.
-         Without this a passer chased their own pass across the court. The
-         responsibility itself stays put for the whole span, so the panel and
-         the contact pull do not flicker off mid-flight. */
-      if(bp[2] < 1.6 && !ui.overrides[resp] && dist > .01){
-        const want = Math.max(0, dist - .4);
-        const move = Math.min(want, respOk ? 1.6 : 1.0);
-        zones[resp] = {...d, p:[d.p[0] + dx/dist*move, d.p[1] + dy/dist*move]};
-      }
-    }
-  }
-
-  /* The lit floor belongs to the swing, so it is built from this step's own
-     authored geometry rather than from positions that are still sliding
-     toward the next step. Otherwise it swells and slides across the court as
-     the blockers land and the hitter walks away, long after the swing that
-     cast it is over. Dragging someone still moves it, because an override
-     counts as that step's geometry. */
+  /* the lit floor is cast from the step's own geometry so it holds still */
+  const a = w.step, b = w.next;
   let shadow = null;
   if(a.shadow){
     const at = (src, k) => ui.overrides[k] ? ui.overrides[k]
@@ -1837,10 +1891,36 @@ function sample(t){
     if(xs.length && ap)
       shadow = [ap[0], ap[1], a.shadow.az, Math.min(...xs) - .33, Math.max(...xs) + .33];
   }
-  /* and once the rally has moved past it, it fades out instead of morphing */
-  const shadowFade = (a.shadow && !b.shadow) ? 1 - u : 1;
+  const shadowFade = (a.shadow && !b.shadow) ? 1 - w.u : 1;
 
-  return {zones, opp, ball:bp, step:a, shadow, shadowFade, resp, respOk, landing, u, span};
+  return {zones, opp, ball:bp, step:a, shadow, shadowFade,
+          resp, respOk, landing:w.landing, u:w.u, span:w.span};
+}
+
+/* Run the whole clip once at a fixed step and keep the frames. Movement is
+   stateful, but re-simulating from zero every time keeps scrubbing exact and
+   repeatable: the same time always gives the same picture. A six second rally
+   is about 360 frames, so this is cheap enough to redo on every drag. */
+function simulate(){
+  const body = {}, obody = {};
+  const first = intent(0);
+  for(const z of ZONES) if(first.zones[z]) body[z] = {p:[...first.zones[z].p], v:[0,0]};
+  for(const id in first.opp)    obody[id] = {p:[...first.opp[id].p], v:[0,0]};
+  for(const k in ui.overrides){
+    if(body[k])  { body[k].p  = [...ui.overrides[k]]; }
+    if(obody[k]) { obody[k].p = [...ui.overrides[k]]; }
+  }
+  lastResp = null;
+  const frames = [];
+  for(let t=0; t <= duration + SIM_DT; t += SIM_DT)
+    frames.push(simStep(t, body, obody, SIM_DT));
+  simFrames = frames;
+}
+
+function sample(t){
+  if(!simFrames) simulate();
+  const i = Math.max(0, Math.min(simFrames.length-1, Math.round(t/SIM_DT)));
+  return simFrames[i];
 }
 
 /* --- drawing --- */
@@ -2141,6 +2221,7 @@ document.getElementById('scrub').addEventListener('input', e=>{
 document.getElementById('speed').addEventListener('change', e=>{ ui.speed = +e.target.value; });
 
 function refreshMoved(){
+  simFrames = null;
   const b = document.getElementById('resetPos');
   if(!b) return;
   const n = Object.keys(ui.overrides).length;

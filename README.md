@@ -104,7 +104,33 @@ up digging more often than people expect, especially at right back, and when
 that happens the right side takes the second ball instead. `setterAfter()`
 handles it and the panel says what is going on.
 
-**Movement** — an attack is not a pose, it is a plant, a jump that starts only
+**Movement is simulated, not interpolated.** The scenario says where it would
+*like* everybody to be at a given moment; `intent()` reads that off the
+keyframes. It does not move anybody. `simStep()` then moves real bodies toward
+those targets under a locomotion model: acceleration of 8.5 m/s², a top speed
+that depends on what they are doing (4.6 m/s running, 2.8 backpedalling, and
+2.5 shuffling sideways along the net, because blockers do not cross over at
+speed), and braking so they arrive rather than overshoot. Going for a ball is a
+*target*, not a teleport: a defender runs at it and may still be short when it
+lands.
+
+Two consequences worth having:
+
+- **You must be planted to jump.** Vertical is scaled by how settled you are,
+  so a blocker who is late is caught mid-shuffle with their hands down instead
+  of gliding into position already airborne. Measured across 86,616 samples:
+  no blocker ever leaves the floor while travelling. The only players airborne
+  while moving are hitters mid-swing, which is correct — a spike approach
+  converts run into jump.
+- **If the rally does not give them time, they do not arrive.** A block that
+  cannot close is the most useful thing this tool can show.
+
+Movement is stateful, which would normally break scrubbing. It does not here,
+because the clip is re-simulated from zero at a fixed 1/60 s step and cached:
+the same time always gives the same picture. A six second rally is about 360
+frames, cheap enough to redo on every drag.
+
+**Poses** — an attack is not a pose, it is a plant, a jump that starts only
 once the feet have loaded, the arm drawn back, the contact and the
 follow-through. A block is the same shape: hands up on the floor first, then
 the jump, then landing once the ball is past. Scenarios only say "approach"
