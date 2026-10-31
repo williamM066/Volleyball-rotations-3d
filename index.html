@@ -128,6 +128,48 @@ legend{
 .rng input[type=range]::-moz-range-thumb{width:13px;height:13px;border:0;border-radius:50%;background:var(--accent);cursor:pointer}
 .rng input[type=range]:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 .rng b{font:600 10.5px/1 var(--font-mono);color:var(--fg);text-align:right}
+
+.tabs{display:flex;gap:4px}
+.tabs button{
+  flex:1 1 0;min-width:0;
+  font:600 10px/1 var(--font-mono);letter-spacing:.09em;text-transform:uppercase;
+  color:var(--muted);background:rgba(79,178,255,.05);
+  border:1px solid var(--line);border-radius:6px;padding:8px 4px;cursor:pointer;
+  transition:background .14s,color .14s,border-color .14s;
+}
+.tabs button:hover{color:var(--fg)}
+.tabs button[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:#04121f}
+.tab{display:flex;flex-direction:column;gap:14px}
+.tab[hidden]{display:none}
+
+.roster{display:flex;flex-direction:column;gap:5px}
+.roster .sw{gap:8px}
+.roster .sw span{font-size:12px}
+.roster .sw small{display:block;color:var(--muted);font-size:10px;margin-top:1px}
+.roster .sw input:disabled{opacity:.45;cursor:not-allowed}
+
+.touch{display:grid;grid-template-columns:1fr 78px 22px;gap:5px;align-items:center}
+.touch select{
+  min-width:0;font:500 11px/1 var(--font-body);color:var(--fg);
+  background:#102134;border:1px solid var(--line);border-radius:6px;padding:6px 4px;
+}
+.touch .x{
+  font:600 13px/1 var(--font-mono);color:var(--muted);background:transparent;
+  border:0;border-radius:5px;padding:4px 0;cursor:pointer;
+}
+.touch .x:hover{color:#ff8c8c}
+.playlist{display:flex;flex-direction:column;gap:4px}
+.playlist .row{display:grid;grid-template-columns:1fr 22px;gap:5px;align-items:center}
+.playlist .row > button:first-child{
+  text-align:left;font:500 11.5px/1.2 var(--font-body);color:var(--fg);
+  background:rgba(79,178,255,.05);border:1px solid var(--line);border-radius:6px;
+  padding:7px 8px;cursor:pointer;
+}
+.playlist .row > button:first-child:hover{background:rgba(79,178,255,.14)}
+#playName{
+  font:500 12px/1 var(--font-body);color:var(--fg);
+  background:#102134;border:1px solid var(--line);border-radius:6px;padding:8px;
+}
 .ghost{
   font:600 11.5px var(--font-body);color:var(--warn);
   background:rgba(255,209,102,.1);border:1px solid rgba(255,209,102,.35);
@@ -235,6 +277,48 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
       <p>5-1 movement, defence and transition. Drag players to move them; click bare floor to ask who takes a ball there.</p>
     </div>
 
+    <div class="tabs" id="tabBar">
+      <button data-tab="coach" aria-pressed="true">Coach</button>
+      <button data-tab="squad" aria-pressed="false">Squad</button>
+      <button data-tab="plays" aria-pressed="false">Plays</button>
+    </div>
+
+    <div class="tab" data-tab="squad" hidden>
+      <fieldset>
+        <legend>Our six</legend>
+        <div class="roster" id="ourRoster"></div>
+        <p class="hintline" id="ourNote"></p>
+      </fieldset>
+
+      <fieldset>
+        <legend>Their side</legend>
+        <div class="roster" id="oppRoster"></div>
+        <p class="hintline">Switch a blocker off and nothing of theirs blocks that
+          ball any more. Add the extras and they join the wall at the net, so you
+          can show a triple block &mdash; or no block at all.</p>
+      </fieldset>
+    </div>
+
+    <div class="tab" data-tab="plays" hidden>
+      <fieldset>
+        <legend>The play</legend>
+        <input id="playName" type="text" placeholder="Name this play" maxlength="40">
+        <div id="touchList"></div>
+        <button id="addTouch" class="ghost">Add a touch</button>
+        <p class="hintline">Each row is one contact, in order. The ball flies from
+          one to the next, and lands on the orange marker after the last one. Drag
+          anybody to where you want them before you run it.</p>
+      </fieldset>
+
+      <fieldset>
+        <legend>Saved plays</legend>
+        <div class="playlist" id="playList"></div>
+        <button id="savePlay" class="ghost">Save this play</button>
+        <button id="newPlay" class="ghost">Start a new one</button>
+      </fieldset>
+    </div>
+
+    <div class="tab" data-tab="coach">
     <fieldset>
       <legend>Scenario</legend>
       <div class="scn" id="scnList"></div>
@@ -325,6 +409,7 @@ button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid 
       <legend>Follow one player</legend>
       <select id="focus"><option value="">Whole team</option></select>
     </fieldset>
+    </div>
   </div>
 
   <div id="note" class="panel">
@@ -1283,7 +1368,13 @@ function labelTexture(text, hex){
 
 const actors = {};
 ZONES.forEach(z => actors[z] = makeActor());
-const OPP_IDS = ['OA','OS','OX'];
+/* Three of them are the rally's own cast - the setter, the pin blocker and
+   the middle. The other three are spare bodies you can put on court from the
+   Squad tab; by default they join the block at the net, which is the only
+   place an extra body changes what the ball does. */
+const OPP_IDS = ['OA','OS','OX','OB','OC','OD'];
+const OPP_ROLE = {OA:'Pin blocker', OS:'Setter', OX:'Middle blocker',
+                  OB:'Extra blocker', OC:'Extra blocker', OD:'Extra blocker'};
 const oppActors = {};
 OPP_IDS.forEach(id => oppActors[id] = makeActor());
 
@@ -1378,10 +1469,15 @@ function defMiddle(system){
   };
 }
 
+/* A player switched off in the Squad tab is off the court: not drawn, not
+   asked to play anything, and not counted when the floor is divided up. */
+const live = z => !!z && !ui.off[z];
+
 /* Who is closest, weighted by what each position is actually there for. */
 function whoTakes(pt, setup){
   let best = null, score = 1e9;
   for(const z in setup){
+    if(!live(z)) continue;
     const s = setup[z];
     const d = Math.hypot(pt[0]-s.p[0], pt[1]-s.p[1]);
     let w = 1;
@@ -1421,10 +1517,12 @@ function roles(ctx){
    is a double contact - so the right side steps in and sets instead. */
 function setterAfter(ctx, firstTouch){
   const nominal = ZONES.find(z => ctx.lu[z] === 'S');
-  if(firstTouch !== nominal) return {zone:nominal, emergency:false};
+  if(live(nominal) && firstTouch !== nominal)
+    return {zone:nominal, emergency:false, absent:false};
   const inv = slotToZone(ctx.lu);
-  const alt = [inv.P2, inv.P1, inv.P4, inv.P6, inv.P3, inv.P5].find(z => z && z !== firstTouch);
-  return {zone:alt || nominal, emergency:true};
+  const alt = [inv.P2, inv.P1, inv.P4, inv.P6, inv.P3, inv.P5]
+    .find(z => live(z) && z !== firstTouch);
+  return {zone:alt || nominal, emergency:live(nominal), absent:!live(nominal)};
 }
 
 /* --- the overlap rules ---
@@ -1564,7 +1662,7 @@ function attackShape(ctx, setterZone, hitterZone, hitPt, phase, prev, approach){
   const midZone = roles(ctx).mid;
   const quickMid = midZone && midZone !== setterZone && midZone !== hitterZone
                    && !isBack(midZone);
-  const others = ZONES.filter(q =>
+  const others = ZONES.filter(q => live(q) &&
     q !== setterZone && q !== hitterZone && !(quickMid && q === midZone));
   const front = others.filter(q => !isBack(q));
   const back  = others.filter(q => isBack(q));
@@ -1618,9 +1716,19 @@ function attackShape(ctx, setterZone, hitterZone, hitPt, phase, prev, approach){
   return out;
 }
 
-const oppBase = ()=>({OS:{p:[-.9,-2.0], pose:'ready'},
+/* anything the Squad tab has switched off never reaches the court */
+const onOpp = m =>{
+  const o = {};
+  for(const k in m) if(!ui.oppOff[k]) o[k] = m[k];
+  return o;
+};
+const oppSet = (base, id, d) => ui.oppOff[id] ? base : {...base, [id]:d};
+const oppBase = ()=> onOpp({OS:{p:[-.9,-2.0], pose:'ready'},
                       OA:{p:[-2.8,-1.2], pose:'ready'},
-                      OX:{p:[2.6,-1.2], pose:'ready'}});
+                      OX:{p:[2.6,-1.2], pose:'ready'},
+                      OB:{p:[-1.5,-.7],  pose:'ready'},
+                      OC:{p:[1.5,-.7],   pose:'ready'},
+                      OD:{p:[0,-3.6],    pose:'ready'}});
 /* Their block forms opposite our hitter. x runs the same way on both sides of
    the net, so a blocker facing a hitter stands at roughly the SAME x, not the
    mirrored one - mirroring puts the block on the wrong side of the court. */
@@ -1705,18 +1813,30 @@ const oppBlock = (hitPt, tempo)=>{
      either of them and the wall moves with the body, which is the whole
      point - a blocker you have put somewhere else is not in front of this
      hitter any more. */
+  /* every extra body you put on court joins the wall, one pair of hands
+     further along the net */
+  const jE = ui.block.oppJ * .85;
+  const extras = {};
+  ['OB','OC','OD'].forEach((id,i)=>{
+    if(ui.oppOff[id]) return;
+    extras[id] = {p:[clamp(mx - (i+1)*.9*sgn, -4, 4), -.5], pose:'block', jump:jE};
+  });
   const walls = [netWall('OA', [px, -.5], jP, blockReach(false, jP)),
-                 netWall('OX', [mx, -.5], jM, blockReach(false, jM, tempo))].filter(Boolean);
+                 netWall('OX', [mx, -.5], jM, blockReach(false, jM, tempo)),
+                 ...Object.keys(extras).map(id =>
+                   netWall(id, extras[id].p, jE, blockReach(false, jE, tempo)))]
+                .filter(Boolean);
   const joinedNow = walls.length > 1 && Math.abs(walls[0].x - walls[1].x) < 1.6;
   /* players and metadata are kept apart on purpose: anything inside the
      player map is treated as a person to interpolate, and a stray key with
      no position takes the whole scene down with it. */
   return {
-    players:{
+    players:onOpp({
       OS:{p:[clamp(-2.4*sgn, -4, 4), -2.9], pose:'ready'},
       OA:{p:[px, -.5], pose:'block', jump:jP},
-      OX:{p:[mx, -.5], pose:'block', jump:jM}
-    },
+      OX:{p:[mx, -.5], pose:'block', jump:jM},
+      ...extras
+    }),
     walls, joined:joinedNow, late
   };
 };
@@ -1780,7 +1900,7 @@ function buildRally(ctx, kind, m){
     firstShape = recvShape(ctx); firstPt = land;
     steps.push({t:0, phase:'Serve',
       coach:'Three passers, each owning a lane. Drag the server or the landing spot and watch who becomes responsible - the shape has to answer every serve, not just this one.',
-      zones:firstShape, opp:{...oppBase(), OS:{p:[...sv], pose:'serve'}},
+      zones:firstShape, opp:oppSet(oppBase(), 'OS', {p:[...sv], pose:'serve'}),
       ball:[sv[0], sv[1], 2.2]});
     steps.push({t:1.25, phase:'Reception',
       coach:'Whoever can play it with their platform square to the target takes it. The other two back them up instead of reaching across.',
@@ -1804,13 +1924,15 @@ function buildRally(ctx, kind, m){
     firstShape = D.zones; firstPt = dig;
     steps.push({t:0, phase:'Their setter has the ball',
       coach:'Drag their setter, and drag where the set is going. The block travels to the ball and the back row builds its shape around the block, not around where the ball is now.',
-      zones:baseShape(ctx), opp:{...oppBase(), OS:{p:[...st], pose:'set'},
-        OA:{p:[clamp(hit[0]*.9,-4.3,4.3), hit[1]-3.2], pose:'ready'}},
+      zones:baseShape(ctx),
+      opp:oppSet(oppSet(oppBase(), 'OS', {p:[...st], pose:'set'}),
+                 'OA', {p:[clamp(hit[0]*.9,-4.3,4.3), hit[1]-3.2], pose:'ready'}),
       ball:[st[0], st[1], 2.4]});
     steps.push({t:1.4, phase:'Their swing',
       coach:'Block is up and closed. The lit floor is every spot a hard swing can still reach, and covering it is the back row job.',
       zones:D.zones, shadow:info,
-      opp:{...oppBase(), OS:{p:[...st], pose:'ready'}, OA:{p:[...hit], pose:'swing', jump:.82}},
+      opp:oppSet(oppSet(oppBase(), 'OS', {p:[...st], pose:'ready'}),
+                 'OA', {p:[...hit], pose:'swing', jump:.82}),
       ball:[hit[0], hit[1], 3.2], arc:1.0});
     steps.push({t:2.35, phase:theirAim.blocked ? 'Off the block' : 'Dig',
       coach:theirAim.blocked
@@ -1819,7 +1941,7 @@ function buildRally(ctx, kind, m){
             ? 'They hit the ' + theirAim.shot + ' because that is the corridor your block left open, and it lands in the lit strip - which is where somebody should already be standing.'
             : 'Nobody got a hand up, so the whole court is open and they hit wherever they liked. Drag a blocker in front of the hitter and watch the lit floor close.'),
       zones:D.zones, shadow:info, resp:true,
-      opp:{...oppBase(), OA:{p:[...hit], pose:'swing', jump:.25}},
+      opp:oppSet(oppBase(), 'OA', {p:[...hit], pose:'swing', jump:.25}),
       ball:[dig[0], dig[1], .5]});
     t0 = 2.35;
 
@@ -1828,7 +1950,7 @@ function buildRally(ctx, kind, m){
     firstShape = freeShape(ctx); firstPt = land;
     steps.push({t:0, phase:'Free ball',
       coach:'They have no attack. Everyone off the net at once and the back court splits into thirds. A free ball is a free point if you treat it like one.',
-      zones:firstShape, opp:{...oppBase(), OA:{p:[...from], pose:'pass'}},
+      zones:firstShape, opp:oppSet(oppBase(), 'OA', {p:[...from], pose:'pass'}),
       ball:[from[0], from[1], 1.8]});
     steps.push({t:1.35, phase:'Play it low',
       coach:'No hurry and no block to beat. Play it low to the target and run a real attack off it.',
@@ -1846,12 +1968,14 @@ function buildRally(ctx, kind, m){
   /* A libero may not complete an attack above the net, so a pipe run by the
      libero is not a pipe - it is a fault. If the call belongs to someone who
      cannot run it, the outside takes the ball instead and the panel says so. */
-  const cantRun = !callZone || callZone === setr.zone || ctx.lu[callZone] === 'L';
+  const cantRun = !live(callZone) || callZone === setr.zone || ctx.lu[callZone] === 'L';
   const hitterZone = !cantRun ? callZone
-                   : (R.pinL !== setr.zone ? R.pinL : R.pinR);
+    : [R.pinL, R.pinR, R.mid, ...ZONES].find(z => live(z) && z !== setr.zone);
   const onCall = hitterZone === callZone && !cantRun;
   const whyNot = !cantRun ? '' :
-    (callZone && ctx.lu[callZone] === 'L')
+    !live(callZone)
+      ? 'Nobody is on court to run that call, so somebody else takes it instead. '
+    : (callZone && ctx.lu[callZone] === 'L')
       ? 'The libero is in that position this rotation and may not attack above the net, so the outside takes it instead. '
       : 'Whoever runs that call is setting this ball, so the outside takes it instead. ';
   const hitPt = onCall ? [...call.p] : [...PIN_L];
@@ -1905,8 +2029,10 @@ function buildRally(ctx, kind, m){
   const tSet  = t0 + 1.25;
   const tHit  = tSet + tempo;
   const tLand = tHit + .9;
-  steps.push({t:tSet, phase:setr.emergency ? 'Setter dug it - right side sets' : 'Up to the target',
-    coach:setr.emergency
+  steps.push({t:tSet, phase:(setr.emergency || setr.absent) ? 'Somebody else sets' : 'Up to the target',
+    coach:setr.absent
+      ? 'Your setter is off the court, so whoever is nearest the target has to put this ball up. Worth rehearsing: it is the first thing that goes wrong when somebody goes down.'
+      : setr.emergency
       ? 'The setter played the first ball, so they are not allowed to touch it again. The right side steps in and sets instead. Teams that have not rehearsed this lose the rally here.'
       : 'The setter is already at the target. Everyone who is not setting is either approaching or getting ready to cover.',
     zones:shBuild,
@@ -1958,13 +2084,86 @@ function buildRally(ctx, kind, m){
   return steps;
 }
 
+/* =============== plays you draw yourself ===============
+   A play is an ordered list of contacts. The ball flies from one to the next
+   and lands on the marker after the last one; everybody holds the spot you
+   put them on. That is all it is - which is the point. Everything else in
+   this tool answers "what should happen here"; this one answers "here is
+   what I want to happen", which is what you draw on a whiteboard. */
+const ACTIONS = [
+  {id:'serve',  name:'Serve',   pose:'serve',   z:2.2, dur:1.3,  arc:1.7},
+  {id:'pass',   name:'Pass',    pose:'pass',    z:.95, dur:1.15, arc:2.2},
+  {id:'dig',    name:'Dig',     pose:'dig_low', z:.55, dur:1.15, arc:2.3},
+  {id:'set',    name:'Set',     pose:'set',     z:2.5, dur:1.05, arc:1.3},
+  {id:'attack', name:'Attack',  pose:'swing',   z:3.0, dur:.85,  arc:.45, jump:.82},
+  {id:'block',  name:'Block',   pose:'block',   z:2.95, dur:.85, arc:.6,  jump:.6},
+  {id:'free',   name:'Free ball', pose:'pass',  z:1.6, dur:1.45, arc:2.4}
+];
+const actionOf = id => ACTIONS.find(a => a.id === id) || ACTIONS[1];
+const inPlay = who => ZONES.includes(who) ? live(who) : !ui.oppOff[who];
+function whoLabel(who){
+  if(ZONES.includes(who)) return (ctx ? ctx.lu[who] : '') + ' \u00b7 zone ' + who.slice(1);
+  return 'Them \u00b7 ' + (OPP_ROLE[who] || who);
+}
+
+function buildPlay(ctx, m){
+  const land = m.land;
+  const touches = (ui.play.touches || []).filter(t => inPlay(t.who));
+  const ourShape = ()=>{
+    const o = switchedBase(ctx.lu);
+    for(const z in o) o[z] = {...o[z], tag:'In the play',
+      note:'Drag anybody where you want them. A play is only worth drawing from the positions you are actually going to start in.'};
+    return o;
+  };
+  const steps = [];
+  if(!touches.length){
+    const zones = ourShape(), opp = oppBase();
+    const empty = {phase:'Nothing to run yet',
+      coach:'Add a touch in the Plays tab and it appears here. Each row is one contact: who plays the ball, and what they do with it.',
+      zones, opp, ball:[land[0], land[1], .16]};
+    steps.push({t:0, ...empty});
+    steps.push({t:1.4, ...empty});
+    return steps;
+  }
+  let t = 0;
+  touches.forEach((tc,i)=>{
+    const A = actionOf(tc.action);
+    const prev = i ? actionOf(touches[i-1].action) : null;
+    const zones = ourShape(), opp = oppBase();
+    const mine = ZONES.includes(tc.who);
+    const slot = mine ? zones : opp;
+    const at = (ui.overrides[tc.who] || (slot[tc.who] ? slot[tc.who].p : [0, mine ? 4 : -4]));
+    if(slot[tc.who])
+      slot[tc.who] = {...slot[tc.who], pose:A.pose, jump:A.jump || 0, tag:A.name,
+        note:A.name + '. The ball arrives here, and leaves for whoever is next on the list.'};
+    steps.push({t, phase:(i+1) + '. ' + A.name + ' \u2014 ' + whoLabel(tc.who),
+      coach:(i === 0
+        ? 'The play starts here. '
+        : 'From ' + whoLabel(touches[i-1].who) + '. ')
+        + 'Drag this player to change where the contact happens, and the whole play follows.',
+      zones, opp, ballAt:tc.who, touch:tc.who,
+      ball:[at[0], at[1], A.z], arc: prev ? prev.arc : undefined});
+    t += A.dur;
+  });
+  const lastA = actionOf(touches[touches.length-1].action);
+  const zones = ourShape(), opp = oppBase();
+  steps.push({t, phase:'It lands', coach:'Drag the orange marker to change where the play finishes.',
+    zones, opp, ball:[land[0], land[1], .18], arc:lastA.arc});
+  steps.push({t:t + .9, phase:'End of the play',
+    coach:'Save it in the Plays tab and it is there next time you open the page.',
+    zones, opp, ball:[land[0], land[1], .16]});
+  return steps;
+}
+
 const SCENARIOS = [
   {id:'recv',   name:'Serve receive', sub:'Move the server and where it lands',
    build:(ctx,m) => buildRally(ctx,'recv',m)},
   {id:'attack', name:'Their attack',  sub:'Move their setter and the set',
    build:(ctx,m) => buildRally(ctx,'attack',m)},
   {id:'free',   name:'Free ball',     sub:'Move where it comes over',
-   build:(ctx,m) => buildRally(ctx,'free',m)}
+   build:(ctx,m) => buildRally(ctx,'free',m)},
+  {id:'play',   name:'Play designer',  sub:'Your own sequence of touches',
+   build:(ctx,m) => buildPlay(ctx,m)}
 ];
 
 /* the two draggable markers per situation, and where each is allowed to go */
@@ -1974,7 +2173,8 @@ const MARK_DEF = {
   attack: [{k:'setter',label:'Their setter',  col:0xff6274, lim:[-4.2,4.2,-4.6,-.5]},
            {k:'hit',   label:'Set goes here', col:0xffd166, lim:[-4.2,4.2,-2.4,-.4]}],
   free:   [{k:'from',  label:'Comes from',    col:0xff6274, lim:[-4.2,4.2,-8.5,-.6]},
-           {k:'land',  label:'Lands',         col:0xff8c2b, lim:[-4.3,4.3,.7,8.7]}]
+           {k:'land',  label:'Lands',         col:0xff8c2b, lim:[-4.3,4.3,.7,8.7]}],
+  play:   [{k:'land',  label:'Lands',         col:0xff8c2b, lim:[-4.3,4.3,-8.7,8.7]}]
 };
 
 /* =============== state =============== */
@@ -1983,11 +2183,18 @@ const ui = {
   marks:{
     recv:   {serve:[-2.4,-10.0], land:[-2.6,5.6]},
     attack: {setter:[-.9,-1.9],  hit:[3.1,-.55]},
-    free:   {from:[1.6,-3.6],    land:[-.6,5.4]}
+    free:   {from:[1.6,-3.6],    land:[-.6,5.4]},
+    play:   {land:[-2.2,-5.2]}
   },
+  play:{name:'', touches:[{who:'P5', action:'pass'},
+                          {who:'P1', action:'set'},
+                          {who:'P4', action:'attack'}]},
+  plays:[],
   showOpen:true, showCov:false, showCross:true, showTrails:true, showLabels:true, focus:'',
   set:'4',
   block:{ourH:1.88, ourJ:.62, oppH:1.92, oppJ:.65},
+  off:{}, oppOff:{OB:true, OC:true, OD:true},
+  tab:'coach',
   overrides:{},
   playing:true, t:0, speed:1, view:'angle'
 };
@@ -2012,6 +2219,8 @@ function rebuild(){
   lastPoseT = -99;                   // new clip: take the first frame as given
   refreshLabels();
   refreshFocusList();
+  refreshRosters();
+  refreshPlay();
   refreshMarks();
 }
 
@@ -2073,6 +2282,7 @@ function intent(t){
 
   const zones = {};
   for(const z of ZONES){
+    if(!live(z)) continue;                          // switched off in the Squad tab
     const za = a.zones[z] || b.zones[z], zb = b.zones[z] || a.zones[z];
     if(!za) continue;
     zones[z] = {
@@ -2104,7 +2314,7 @@ function intent(t){
   const anchorAt = (st)=>{
     if(!st.ballAt) return null;
     if(ui.overrides[st.ballAt]) return [...ui.overrides[st.ballAt]];
-    const r = (st.zones || {})[st.ballAt];
+    const r = (st.zones || {})[st.ballAt] || (st.opp || {})[st.ballAt];
     return r ? [...r.p] : null;
   };
   const ba = anchorAt(a) || a.ball, bb = anchorAt(b) || b.ball;
@@ -2190,7 +2400,11 @@ function simStep(t, body, obody, dt){
   /* ---- who is going for this ball, judged from where bodies really are ---- */
   let resp = null, respOk = true;
   if(!w.step.resp) lastResp = null;
-  if(w.step.resp){
+  if(w.step.touch){
+    /* in a play you said who plays this ball, so nobody has to be judged
+       nearest to it - and nobody runs at it either */
+    resp = w.step.touch; respOk = true;
+  } else if(w.step.resp){
     const setup = {};
     for(const z of ZONES)
       if(body[z]) setup[z] = {p:body[z].p, pose:w.zones[z] ? w.zones[z].pose : 'ready',
@@ -2391,7 +2605,6 @@ function frame(dt){
     let op = 1;
     if(focus && focus !== z){ col = COL.dim; op = .5; }
     if(focus === z) col = COL.focus;
-    if(s.resp === z && !focus) col = COL.focus;
     const pose = livePose(d.pose, z, d, s, a, dt);
     paintActor(a, d.p[0], d.p[1], d.jump||0, pose, col, op, true,
                facePoint(pose, d.p, s.ball), bodyScale(true));
@@ -2399,10 +2612,12 @@ function frame(dt){
     if(s.resp === z) respContact = handPoint(a.fig, pose);
     else if(!setContact && pose === 'set') setContact = handPoint(a.fig, pose);
 
-    const isResp = s.resp === z;
-    a.ring.visible = isResp || focus === z;
+    /* Only the player you asked to follow is picked out. Lighting up whoever
+       happens to be playing the ball made the whole team flicker white as
+       responsibility moved around. */
+    a.ring.visible = focus === z;
     a.ring.position.set(d.p[0], .03, d.p[1]);
-    a.ring.material.color.setHex(isResp ? 0xffd166 : COL.team);
+    a.ring.material.color.setHex(COL.team);
 
     if(ui.showTrails){
       a.history.push([d.p[0], d.p[1]]);
@@ -2426,7 +2641,8 @@ function frame(dt){
     if(!d){ a.fig.root.visible = false; a.pad.visible = false; a.label.visible = false; a.ring.visible = false; a.trail.visible = false; continue; }
     paintActor(a, d.p[0], d.p[1], d.jump||0, d.pose, COL.opp, focus ? .45 : 1, false,
                facePoint(d.pose, d.p, s.ball), bodyScale(false));
-    if(d.pose === 'swing' && !respContact) respContact = handPoint(a.fig, 'swing');
+    if(s.resp === id) respContact = handPoint(a.fig, d.pose);
+    else if(d.pose === 'swing' && !respContact) respContact = handPoint(a.fig, 'swing');
     a.ring.visible = false; a.trail.visible = false;
   }
 
@@ -2570,13 +2786,14 @@ for(const s of SCENARIOS){
   b.dataset.id = s.id;
   b.setAttribute('aria-pressed', String(s.id === ui.scenario));
   b.innerHTML = `${s.name}<small>${s.sub}</small>`;
-  b.addEventListener('click', ()=>{
-    ui.scenario = s.id; ui.t = 0;
-    for(const z of ZONES) actors[z].history.length = 0;
-    [...scnList.children].forEach(c => c.setAttribute('aria-pressed', String(c.dataset.id === s.id)));
-    rebuild();
-  });
+  b.addEventListener('click', ()=> setScenario(s.id));
   scnList.appendChild(b);
+}
+function setScenario(id){
+  ui.scenario = id; ui.t = 0;
+  for(const z of ZONES) actors[z].history.length = 0;
+  [...scnList.children].forEach(c => c.setAttribute('aria-pressed', String(c.dataset.id === id)));
+  rebuild();
 }
 
 const rotSeg = document.getElementById('rotSeg');
@@ -2709,6 +2926,174 @@ bindRange('oppH', 'oppH', v => v.toFixed(2) + ' m');
 bindRange('oppJ', 'oppJ', v => Math.round(v*100) + ' cm');
 paintBlockNote();
 
+/* ---- tabs ---- */
+function setTab(name){
+  ui.tab = name;
+  for(const b of document.querySelectorAll('#tabBar button'))
+    b.setAttribute('aria-pressed', String(b.dataset.tab === name));
+  for(const d of document.querySelectorAll('.tab'))
+    d.hidden = d.dataset.tab !== name;
+  if(name === 'plays' && ui.scenario !== 'play') setScenario('play');
+}
+for(const b of document.querySelectorAll('#tabBar button'))
+  b.addEventListener('click', ()=> setTab(b.dataset.tab));
+
+/* ---- who is on the court ---- */
+function rosterRow(parent, key, title, sub, on, onChange, lock){
+  const l = document.createElement('label');
+  l.className = 'sw';
+  const i = document.createElement('input');
+  i.type = 'checkbox'; i.checked = on; i.disabled = !!lock;
+  const sp = document.createElement('span');
+  sp.textContent = title;
+  const sm = document.createElement('small');
+  sm.textContent = sub;
+  sp.appendChild(sm);
+  i.addEventListener('change', ()=> onChange(i.checked));
+  l.appendChild(i); l.appendChild(sp);
+  parent.appendChild(l);
+}
+function refreshRosters(){
+  const ours = document.getElementById('ourRoster');
+  ours.innerHTML = '';
+  const onCount = ZONES.filter(live).length;
+  for(const z of ZONES){
+    const role = ctx ? ctx.lu[z] : z;
+    rosterRow(ours, z, role + ' \u00b7 zone ' + z.slice(1),
+      isBack(z) ? 'Back row' : 'Front row', live(z),
+      v =>{
+        if(v) delete ui.off[z]; else ui.off[z] = true;
+        ui.overrides = {};
+        refreshMoved(); refreshRosters(); refreshFocusList(); rebuildSteps();
+      },
+      live(z) && onCount <= 1);
+  }
+  document.getElementById('ourNote').textContent =
+    onCount + ' of 6 on court. Switch somebody off and the rest have to cover '
+    + 'their floor - which is the quickest way to show a team what one missing '
+    + 'player actually costs.';
+
+  const theirs = document.getElementById('oppRoster');
+  theirs.innerHTML = '';
+  for(const id of OPP_IDS){
+    rosterRow(theirs, id, OPP_ROLE[id], id, !ui.oppOff[id], v =>{
+      if(v) delete ui.oppOff[id]; else ui.oppOff[id] = true;
+      delete ui.overrides[id];
+      refreshMoved(); refreshRosters(); rebuildSteps();
+    });
+  }
+}
+
+/* ---- the play editor ---- */
+const PLAY_KEY = 'cv.plays';
+function readPlays(){
+  try{ const v = JSON.parse(localStorage.getItem(PLAY_KEY)); return Array.isArray(v) ? v : []; }
+  catch(err){ return []; }
+}
+function writePlays(){
+  try{ localStorage.setItem(PLAY_KEY, JSON.stringify(ui.plays)); }catch(err){}
+}
+function playerOptions(sel, chosen){
+  sel.innerHTML = '';
+  const add = (value, text)=>{
+    const o = document.createElement('option');
+    o.value = value; o.textContent = text;
+    o.selected = value === chosen;
+    sel.appendChild(o);
+  };
+  for(const z of ZONES) if(live(z)) add(z, whoLabel(z));
+  for(const id of OPP_IDS) if(!ui.oppOff[id]) add(id, whoLabel(id));
+  if(chosen && !sel.value) add(chosen, whoLabel(chosen) + ' (off court)');
+  sel.value = chosen;
+}
+function refreshPlay(){
+  const list = document.getElementById('touchList');
+  if(!list) return;
+  document.getElementById('playName').value = ui.play.name || '';
+  list.innerHTML = '';
+  ui.play.touches.forEach((tc,i)=>{
+    const row = document.createElement('div');
+    row.className = 'touch';
+    const who = document.createElement('select');
+    playerOptions(who, tc.who);
+    who.addEventListener('change', ()=>{ tc.who = who.value; rebuildSteps(); });
+    const act = document.createElement('select');
+    for(const A of ACTIONS){
+      const o = document.createElement('option');
+      o.value = A.id; o.textContent = A.name; o.selected = A.id === tc.action;
+      act.appendChild(o);
+    }
+    act.addEventListener('change', ()=>{ tc.action = act.value; rebuildSteps(); });
+    const x = document.createElement('button');
+    x.className = 'x'; x.type = 'button'; x.textContent = '\u00d7';
+    x.title = 'Remove this touch';
+    x.addEventListener('click', ()=>{
+      ui.play.touches.splice(i,1); refreshPlay(); rebuildSteps();
+    });
+    row.appendChild(who); row.appendChild(act); row.appendChild(x);
+    list.appendChild(row);
+  });
+}
+function refreshPlayList(){
+  const box = document.getElementById('playList');
+  if(!box) return;
+  box.innerHTML = '';
+  if(!ui.plays.length){
+    const p = document.createElement('p');
+    p.className = 'hintline';
+    p.textContent = 'Nothing saved yet. Plays are kept in this browser.';
+    box.appendChild(p);
+    return;
+  }
+  ui.plays.forEach((pl,i)=>{
+    const row = document.createElement('div');
+    row.className = 'row';
+    const open = document.createElement('button');
+    open.type = 'button';
+    open.textContent = pl.name || 'Untitled';
+    open.addEventListener('click', ()=>{
+      ui.play = JSON.parse(JSON.stringify(pl));
+      refreshPlay();
+      if(ui.scenario !== 'play') setScenario('play'); else rebuildSteps();
+      ui.t = 0;
+    });
+    const x = document.createElement('button');
+    x.className = 'x'; x.type = 'button'; x.textContent = '\u00d7';
+    x.title = 'Delete this play';
+    x.addEventListener('click', ()=>{
+      ui.plays.splice(i,1); writePlays(); refreshPlayList();
+    });
+    row.appendChild(open); row.appendChild(x);
+    box.appendChild(row);
+  });
+}
+document.getElementById('playName').addEventListener('input', e=>{
+  ui.play.name = e.target.value;
+});
+document.getElementById('addTouch').addEventListener('click', ()=>{
+  const first = ZONES.find(live) || OPP_IDS.find(id => !ui.oppOff[id]);
+  const last = ui.play.touches[ui.play.touches.length-1];
+  ui.play.touches.push({who:first, action: last && last.action === 'pass' ? 'set' : 'pass'});
+  refreshPlay();
+  if(ui.scenario !== 'play') setScenario('play'); else rebuildSteps();
+});
+document.getElementById('savePlay').addEventListener('click', e=>{
+  const name = (ui.play.name || '').trim() || 'Play ' + (ui.plays.length + 1);
+  ui.play.name = name;
+  const copy = JSON.parse(JSON.stringify(ui.play));
+  const at = ui.plays.findIndex(q => q.name === name);
+  if(at >= 0) ui.plays[at] = copy; else ui.plays.push(copy);
+  writePlays(); refreshPlay(); refreshPlayList();
+  const btn = e.currentTarget;
+  btn.textContent = 'Saved';
+  setTimeout(()=>{ btn.textContent = 'Save this play'; }, 1500);
+});
+document.getElementById('newPlay').addEventListener('click', ()=>{
+  ui.play = {name:'', touches:[{who:ZONES.find(live) || 'P5', action:'pass'}]};
+  refreshPlay();
+  if(ui.scenario !== 'play') setScenario('play'); else rebuildSteps();
+});
+
 document.getElementById('shareBtn').addEventListener('click', async e=>{
   const btn = e.currentTarget;
   const url = location.origin + location.pathname + '?s=' + stateToHash();
@@ -2739,6 +3124,10 @@ function stateToHash(){
   const ov = {};
   for(const k in ui.overrides) ov[k] = [r1(ui.overrides[k][0]), r1(ui.overrides[k][1])];
   if(Object.keys(ov).length) o.o = ov;
+  const offs = Object.keys(ui.off).concat(Object.keys(ui.oppOff).map(k => '!' + k));
+  if(offs.length) o.f = offs;
+  if(ui.scenario === 'play')
+    o.p = {n:ui.play.name || '', t:ui.play.touches.map(q => [q.who, q.action])};
   return btoa(JSON.stringify(o)).replace(/=+$/, '');
 }
 function syncControls(){
@@ -2774,6 +3163,17 @@ function readHash(){
     if(Array.isArray(o.m)) o.m.forEach((q2,i)=>{
       if(keys[i] && Array.isArray(q2)) ui.marks[ui.scenario][keys[i]] = [q2[0], q2[1]];
     });
+    if(Array.isArray(o.f)){
+      ui.off = {}; ui.oppOff = {};
+      for(const k of o.f){
+        if(k[0] === '!'){ if(OPP_IDS.includes(k.slice(1))) ui.oppOff[k.slice(1)] = true; }
+        else if(ZONES.includes(k)) ui.off[k] = true;
+      }
+    }
+    if(o.p && Array.isArray(o.p.t))
+      ui.play = {name:String(o.p.n || ''),
+        touches:o.p.t.filter(q => Array.isArray(q) && q.length === 2)
+                     .map(q => ({who:String(q[0]), action:String(q[1])}))};
     if(o.o) pendingOverrides = o.o;
   }catch(err){ /* a bad link just opens the default picture */ }
 }
@@ -2795,6 +3195,8 @@ function tick(now){
   requestAnimationFrame(tick);
 }
 
+ui.plays = readPlays();
+refreshPlayList();
 readHash();
 syncControls();
 rebuild();
